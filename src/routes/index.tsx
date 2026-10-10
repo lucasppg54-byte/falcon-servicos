@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import {
+  anularRegistroRecente,
   buscarLocalPorQr,
   ehAdminSeguranca,
   listarRegistros,
@@ -10,7 +11,11 @@ import {
   type LocalRonda,
   type RegistroRonda,
 } from "@/lib/rondas";
+import { encontrarRegistroAnulavel, JANELA_ANULACAO_MINUTOS, tempoRestanteAnulacao } from "@/lib/anulacao";
+import { escapeHtml } from "@/lib/html";
 import { supabase } from "@/integrations/supabase/client";
+import { QrScanner } from "@/components/QrScanner";
+import { LocaisQrSection } from "@/components/admin/LocaisQrSection";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -469,62 +474,70 @@ function MainScreen({
   if (admin) {
     return (
       <div className="flex min-h-screen flex-col bg-black font-body text-zinc-100">
-        <header className="flex items-center justify-between bg-zinc-950 px-8 py-4 border-b border-zinc-800 shadow-xl">
-          <div className="flex items-center gap-3">
-            <div className="flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-zinc-900 ring-1 ring-zinc-700">
+        <header className="sticky top-0 z-20 flex items-center justify-between gap-3 border-b border-zinc-800 bg-zinc-950 px-4 py-3 shadow-xl sm:px-6 lg:px-8 lg:py-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-zinc-900 ring-1 ring-zinc-700 sm:size-11">
               <img src="/logo.jpeg" alt="Falcon Serviços" className="size-full object-cover" />
             </div>
-            <div>
-              <p className="font-display text-[18px] font-bold text-zinc-100">Falcon Serviços — Centro de Comando (Admin)</p>
-              <p className="text-[11px] uppercase tracking-[0.18em] text-amber-400 font-semibold">Painel Executivo Comercial & Gestão</p>
+            <div className="min-w-0">
+              <p className="truncate font-display text-[15px] font-bold text-zinc-100 sm:text-[18px]">
+                Falcon Serviços<span className="hidden sm:inline"> — Centro de Comando (Admin)</span>
+              </p>
+              <p className="truncate text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-400 sm:text-[11px]">
+                <span className="sm:hidden">Centro de Comando</span>
+                <span className="hidden sm:inline">Painel Executivo Comercial & Gestão</span>
+              </p>
             </div>
           </div>
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 rounded-full bg-zinc-900 px-3.5 py-1.5 border border-zinc-800">
+          <div className="flex shrink-0 items-center gap-2 sm:gap-4">
+            <div
+              className="flex items-center gap-2 rounded-full border border-zinc-800 bg-zinc-900 p-2 md:px-3.5 md:py-1.5"
+              title="Sistema Online (Supabase)"
+            >
               <span className="size-2.5 rounded-full bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.2)]"></span>
-              <span className="text-[11px] font-semibold text-emerald-400 uppercase">Sistema Online (Supabase)</span>
+              <span className="hidden text-[11px] font-semibold uppercase text-emerald-400 md:inline">Sistema Online (Supabase)</span>
             </div>
             <button
               onClick={onTrocar}
-              className="rounded-xl bg-zinc-900 px-4 py-2 text-[12px] font-semibold text-zinc-300 ring-1 ring-zinc-700 hover:bg-zinc-800"
+              className="rounded-xl bg-zinc-900 px-3 py-2 text-[12px] font-semibold text-zinc-300 ring-1 ring-zinc-700 hover:bg-zinc-800 sm:px-4"
             >
-              Sair / Trocar
+              Sair<span className="hidden sm:inline"> / Trocar</span>
             </button>
           </div>
         </header>
 
-        {/* ABAS DO ADMIN */}
-        <div className="bg-zinc-950 px-8 py-3 border-b border-zinc-800 flex flex-wrap gap-2">
-          <TabButton active={tab === "registrar"} onClick={() => setTab("registrar")}>
-            📊 Visão Geral (Dashboard)
+        {/* ABAS DO ADMIN — deslizam na horizontal em ecrãs pequenos */}
+        <nav className="flex gap-2 overflow-x-auto border-b border-zinc-800 bg-zinc-950 px-4 py-3 [scrollbar-width:none] sm:px-6 lg:flex-wrap lg:px-8">
+          <TabButton active={tab === "registrar"} onClick={() => setTab("registrar")} className="shrink-0 whitespace-nowrap">
+            📊 Visão Geral<span className="hidden md:inline"> (Dashboard)</span>
           </TabButton>
-          <TabButton active={tab === "historico"} onClick={() => setTab("historico")}>
-            📋 Histórico & Relatórios
+          <TabButton active={tab === "historico"} onClick={() => setTab("historico")} className="shrink-0 whitespace-nowrap">
+            📋 Histórico<span className="hidden md:inline"> & Relatórios</span>
           </TabButton>
-          <TabButton active={tab === "ocorrencias"} onClick={() => setTab("ocorrencias")}>
+          <TabButton active={tab === "ocorrencias"} onClick={() => setTab("ocorrencias")} className="shrink-0 whitespace-nowrap">
             📖 Livro Ata
           </TabButton>
-          <TabButton active={tab === "financeiro"} onClick={() => setTab("financeiro")}>
+          <TabButton active={tab === "financeiro"} onClick={() => setTab("financeiro")} className="shrink-0 whitespace-nowrap">
             💰 Financeiro PJ
           </TabButton>
-          <TabButton active={tab === "admin"} onClick={() => setTab("admin")}>
-            ⚙️ Gestão de Postos & Equipa
+          <TabButton active={tab === "admin"} onClick={() => setTab("admin")} className="shrink-0 whitespace-nowrap">
+            ⚙️ Postos, Equipa & QR
           </TabButton>
-        </div>
+        </nav>
 
-        <div className="flex-1 p-8 bg-zinc-950/40 overflow-y-auto">
-          <div className="max-w-7xl mx-auto space-y-6">
+        <div className="flex-1 overflow-y-auto bg-zinc-950/40 p-3 sm:p-6 lg:p-8">
+          <div className="mx-auto max-w-7xl space-y-4 sm:space-y-6">
             {tab === "registrar" && (
-              <div className="space-y-6">
+              <div className="space-y-4 sm:space-y-6">
                 {/* ---------------- CARD DE INDICADORES PRINCIPAIS (ESTILO RADAR FÁCIL) ---------------- */}
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                <div className="grid grid-cols-2 gap-3 sm:gap-6 lg:grid-cols-4">
                   {/* Card Cumprimento Médio */}
-                  <div className="rounded-2xl bg-gradient-to-br from-indigo-900 via-zinc-900 to-zinc-950 p-6 ring-1 ring-indigo-500/30 shadow-xl flex flex-col justify-between">
+                  <div className="flex flex-col justify-between rounded-2xl bg-gradient-to-br from-indigo-900 via-zinc-900 to-zinc-950 p-4 shadow-xl ring-1 ring-indigo-500/30 sm:p-6">
                     <div>
-                      <p className="text-[12px] font-semibold text-indigo-300 uppercase tracking-wider">Cumprimento Médio</p>
-                      <div className="my-4 flex items-center justify-center">
-                        <div className="relative flex size-24 items-center justify-center rounded-full bg-indigo-500/20 ring-4 ring-indigo-500/40 shadow-inner">
-                          <span className="font-display text-[24px] font-bold text-white">100%</span>
+                      <p className="text-[11px] font-semibold uppercase tracking-wider text-indigo-300 sm:text-[12px]">Cumprimento Médio</p>
+                      <div className="my-3 flex items-center justify-center sm:my-4">
+                        <div className="relative flex size-16 items-center justify-center rounded-full bg-indigo-500/20 shadow-inner ring-4 ring-indigo-500/40 sm:size-24">
+                          <span className="font-display text-[20px] font-bold text-white sm:text-[24px]">100%</span>
                         </div>
                       </div>
                     </div>
@@ -532,10 +545,10 @@ function MainScreen({
                   </div>
 
                   {/* Card Colaboradores */}
-                  <div className="rounded-2xl bg-zinc-900 p-6 ring-1 ring-zinc-800 shadow-xl flex flex-col justify-between">
+                  <div className="flex flex-col justify-between rounded-2xl bg-zinc-900 p-4 shadow-xl ring-1 ring-zinc-800 sm:p-6">
                     <div>
-                      <p className="text-[12px] font-semibold text-zinc-400 uppercase tracking-wider">Colaboradores</p>
-                      <p className="font-display text-[32px] font-bold text-zinc-100 mt-3">{totalColaboradores}</p>
+                      <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400 sm:text-[12px]">Colaboradores</p>
+                      <p className="mt-2 font-display text-[26px] font-bold text-zinc-100 sm:mt-3 sm:text-[32px]">{totalColaboradores}</p>
                       <p className="text-[12px] text-emerald-400 mt-1">Ativos no sistema</p>
                     </div>
                     <button
@@ -547,10 +560,10 @@ function MainScreen({
                   </div>
 
                   {/* Card Atividades no Mês */}
-                  <div className="rounded-2xl bg-zinc-900 p-6 ring-1 ring-zinc-800 shadow-xl flex flex-col justify-between">
+                  <div className="flex flex-col justify-between rounded-2xl bg-zinc-900 p-4 shadow-xl ring-1 ring-zinc-800 sm:p-6">
                     <div>
-                      <p className="text-[12px] font-semibold text-zinc-400 uppercase tracking-wider">Atividades no Mês</p>
-                      <p className="font-display text-[32px] font-bold text-zinc-100 mt-3">{totalAtividadesMes}</p>
+                      <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400 sm:text-[12px]">Atividades no Mês</p>
+                      <p className="mt-2 font-display text-[26px] font-bold text-zinc-100 sm:mt-3 sm:text-[32px]">{totalAtividadesMes}</p>
                       <p className="text-[12px] text-zinc-400 mt-1">Rondas executadas</p>
                     </div>
                     <button
@@ -562,10 +575,10 @@ function MainScreen({
                   </div>
 
                   {/* Card Ocorrências do Mês */}
-                  <div className="rounded-2xl bg-zinc-900 p-6 ring-1 ring-zinc-800 shadow-xl flex flex-col justify-between">
+                  <div className="flex flex-col justify-between rounded-2xl bg-zinc-900 p-4 shadow-xl ring-1 ring-zinc-800 sm:p-6">
                     <div>
-                      <p className="text-[12px] font-semibold text-zinc-400 uppercase tracking-wider">Ocorrências do Mês</p>
-                      <p className="font-display text-[32px] font-bold text-red-400 mt-3">{totalOcorrenciasMes}</p>
+                      <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400 sm:text-[12px]">Ocorrências do Mês</p>
+                      <p className="mt-2 font-display text-[26px] font-bold text-red-400 sm:mt-3 sm:text-[32px]">{totalOcorrenciasMes}</p>
                       <p className="text-[12px] text-zinc-400 mt-1">Registradas em campo</p>
                     </div>
                     <button
@@ -578,8 +591,8 @@ function MainScreen({
                 </div>
 
                 {/* ---------------- BARRAS DE STATUS ---------------- */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="rounded-2xl bg-zinc-900 p-6 ring-1 ring-zinc-800 shadow-xl space-y-3">
+                <div className="grid grid-cols-1 gap-3 sm:gap-6 md:grid-cols-2">
+                  <div className="space-y-3 rounded-2xl bg-zinc-900 p-4 shadow-xl ring-1 ring-zinc-800 sm:p-6">
                     <div className="flex justify-between items-center">
                       <p className="font-display text-[15px] font-bold text-zinc-100">Atividades de Hoje</p>
                       <span className="text-[11px] text-zinc-400 font-mono">{ultimasRondas.length} total</span>
@@ -594,7 +607,7 @@ function MainScreen({
                     </div>
                   </div>
 
-                  <div className="rounded-2xl bg-zinc-900 p-6 ring-1 ring-zinc-800 shadow-xl space-y-3">
+                  <div className="space-y-3 rounded-2xl bg-zinc-900 p-4 shadow-xl ring-1 ring-zinc-800 sm:p-6">
                     <div className="flex justify-between items-center">
                       <p className="font-display text-[15px] font-bold text-zinc-100">Casos de Ocorrência</p>
                       <span className="text-[11px] text-zinc-400 font-mono">{totalOcorrenciasMes} ativos</span>
@@ -611,12 +624,12 @@ function MainScreen({
                 </div>
 
                 {/* ---------------- LINHA DO TEMPO ---------------- */}
-                <div className="rounded-2xl bg-zinc-900 p-6 ring-1 ring-zinc-800 shadow-xl space-y-4">
-                  <div className="flex justify-between items-center border-b border-zinc-800 pb-3">
-                    <h3 className="font-display text-[16px] font-bold text-zinc-100">📅 Linha do Tempo — Atividades Recentes</h3>
+                <div className="space-y-4 rounded-2xl bg-zinc-900 p-4 shadow-xl ring-1 ring-zinc-800 sm:p-6">
+                  <div className="flex items-center justify-between gap-2 border-b border-zinc-800 pb-3">
+                    <h3 className="font-display text-[15px] font-bold text-zinc-100 sm:text-[16px]">📅 Linha do Tempo — Atividades Recentes</h3>
                     <button
                       onClick={() => setTab("historico")}
-                      className="text-[12px] font-semibold text-indigo-400 hover:underline cursor-pointer bg-transparent border-none p-0"
+                      className="shrink-0 whitespace-nowrap text-[12px] font-semibold text-indigo-400 hover:underline cursor-pointer bg-transparent border-none p-0"
                     >
                       Ver todas ›
                     </button>
@@ -625,21 +638,21 @@ function MainScreen({
                   {ultimasRondas.length === 0 ? (
                     <p className="text-[13px] text-zinc-500 py-6 text-center">Nenhuma atividade registrada no período.</p>
                   ) : (
-                    <div className="space-y-3 max-h-[380px] overflow-y-auto pr-2">
+                    <div className="max-h-[380px] space-y-3 overflow-y-auto pr-1 sm:pr-2">
                       {ultimasRondas.slice(0, 10).map((r) => (
-                        <div key={r.id} className="flex items-center justify-between rounded-xl bg-zinc-950 p-4 ring-1 ring-zinc-800">
-                          <div className="flex items-center gap-3">
-                            <span className="font-mono text-[12px] font-bold text-amber-400 bg-zinc-900 px-2.5 py-1 rounded-md">
+                        <div key={r.id} className="flex flex-col gap-2 rounded-xl bg-zinc-950 p-3 ring-1 ring-zinc-800 sm:flex-row sm:items-center sm:justify-between sm:p-4">
+                          <div className="flex min-w-0 items-center gap-3">
+                            <span className="shrink-0 rounded-md bg-zinc-900 px-2.5 py-1 font-mono text-[12px] font-bold text-amber-400">
                               {formatarHora(r.created_at)}
                             </span>
-                            <div>
-                              <p className="font-semibold text-[14px] text-zinc-100">
+                            <div className="min-w-0">
+                              <p className="truncate text-[14px] font-semibold text-zinc-100">
                                 {r.locais_ronda ? `${r.locais_ronda.predio} — ${r.locais_ronda.local}` : "Ronda de Posto"}
                               </p>
-                              <p className="text-[12px] text-zinc-400">Responsável: <span className="text-zinc-200 font-medium">{r.seguranca}</span></p>
+                              <p className="truncate text-[12px] text-zinc-400">Responsável: <span className="text-zinc-200 font-medium">{r.seguranca}</span></p>
                             </div>
                           </div>
-                          <div>
+                          <div className="shrink-0 self-end sm:self-auto">
                             <span className={r.status === "OK" ? "rounded-lg bg-emerald-500/20 px-3 py-1 font-mono text-[11px] font-bold uppercase text-emerald-400 ring-1 ring-emerald-500/30" : "rounded-lg bg-red-500/20 px-3 py-1 font-mono text-[11px] font-bold uppercase text-red-400 ring-1 ring-red-500/30"}>
                               {r.status === "OK" ? "✓ Realizada" : "⚠️ Anomalia"}
                             </span>
@@ -664,17 +677,18 @@ function MainScreen({
 
   return (
     <Shell>
-      <div className="flex flex-wrap gap-1 bg-zinc-950 px-2 pt-3 pb-1 border-b border-zinc-800">
-        <TabButton active={tab === "registrar"} onClick={() => setTab("registrar")}>
+      {/* 4 colunas iguais: evita que "Livro Ata" salte para uma segunda linha */}
+      <div className="grid grid-cols-4 gap-1 border-b border-zinc-800 bg-zinc-950 px-2 pt-3 pb-2">
+        <TabButton active={tab === "registrar"} onClick={() => setTab("registrar")} className="!px-1 !text-[12px] whitespace-nowrap">
           Registrar
         </TabButton>
-        <TabButton active={tab === "checklist"} onClick={() => setTab("checklist")}>
+        <TabButton active={tab === "checklist"} onClick={() => setTab("checklist")} className="!px-1 !text-[12px] whitespace-nowrap">
           Checklist
         </TabButton>
-        <TabButton active={tab === "historico"} onClick={() => setTab("historico")}>
+        <TabButton active={tab === "historico"} onClick={() => setTab("historico")} className="!px-1 !text-[12px] whitespace-nowrap">
           Histórico
         </TabButton>
-        <TabButton active={tab === "ocorrencias"} onClick={() => setTab("ocorrencias")}>
+        <TabButton active={tab === "ocorrencias"} onClick={() => setTab("ocorrencias")} className="!px-1 !text-[12px] whitespace-nowrap">
           Livro Ata
         </TabButton>
         {admin && (
@@ -773,19 +787,22 @@ function TabButton({
   active,
   onClick,
   children,
+  className = "",
 }: {
   active: boolean;
   onClick: () => void;
   children: React.ReactNode;
+  className?: string;
 }) {
   return (
     <button
       onClick={onClick}
-      className={
+      aria-current={active ? "page" : undefined}
+      className={`${
         active
           ? "rounded-[12px] bg-zinc-900 py-2.5 px-5 text-[13px] font-bold text-amber-400 ring-1 ring-amber-500/50 shadow-md"
           : "rounded-[12px] bg-zinc-950 py-2.5 px-5 text-[13px] font-semibold text-zinc-400 hover:text-zinc-200"
-      }
+      } ${className}`}
     >
       {children}
     </button>
@@ -854,6 +871,23 @@ function RegistrarTab({ seguranca, postoAtribuido, isCobertura, admin }: { segur
   
   const [fotoFile, setFotoFile] = useState<File | null>(null);
   const [fotoPreview, setFotoPreview] = useState<string | null>(null);
+  const [ultimoRegistroId, setUltimoRegistroId] = useState<string | null>(null);
+  const [anulando, setAnulando] = useState(false);
+
+  async function anularUltimo() {
+    if (!ultimoRegistroId) return;
+    if (!window.confirm("Anular este registo? Poderá voltar a ler o QR deste ponto.")) return;
+    setAnulando(true);
+    try {
+      await anularRegistroRecente(ultimoRegistroId, seguranca);
+      setUltimoRegistroId(null);
+      setConfirmacao("ANULADO");
+    } catch (err) {
+      setErroBusca(err instanceof Error ? err.message : "Não foi possível anular o registo.");
+    } finally {
+      setAnulando(false);
+    }
+  }
 
   async function consultar(valor: string, manual = false) {
     const codigoLimpo = normalizarCodigoQr(valor);
@@ -861,6 +895,7 @@ function RegistrarTab({ seguranca, postoAtribuido, isCobertura, admin }: { segur
     setBuscando(true);
     setErroBusca("");
     setConfirmacao(null);
+    setUltimoRegistroId(null);
     setFoiManual(manual);
     setObsManual("");
     setErroObsManual("");
@@ -934,7 +969,7 @@ function RegistrarTab({ seguranca, postoAtribuido, isCobertura, admin }: { segur
         ? `⚠️ BAIXA MANUAL: ${obsManual.trim()} (Verificar in loco)` 
         : undefined;
 
-      await registrarRonda({ 
+      const criado = await registrarRonda({ 
         localId: local.id, 
         seguranca, 
         status: "OK", 
@@ -946,6 +981,7 @@ function RegistrarTab({ seguranca, postoAtribuido, isCobertura, admin }: { segur
         postoCobertura: postoAtribuido,
       });
 
+      setUltimoRegistroId(criado.id);
       setConfirmacao(foiManual ? "OK_MANUAL" : "OK");
       setLocal(null);
       setCodigo("");
@@ -966,7 +1002,7 @@ function RegistrarTab({ seguranca, postoAtribuido, isCobertura, admin }: { segur
     setEnviando(true);
     try {
       const gps = await obterLocalizacaoAtual();
-      await registrarRonda({
+      const criado = await registrarRonda({
         localId: local.id,
         seguranca,
         status: "ANOMALIA",
@@ -978,6 +1014,7 @@ function RegistrarTab({ seguranca, postoAtribuido, isCobertura, admin }: { segur
         isCobertura,
         postoCobertura: postoAtribuido,
       });
+      setUltimoRegistroId(criado.id);
       setConfirmacao("ANOMALIA");
       setLocal(null);
       setCodigo("");
@@ -1029,7 +1066,9 @@ function RegistrarTab({ seguranca, postoAtribuido, isCobertura, admin }: { segur
         {confirmacao && (
           <div
             className={
-              confirmacao === "ANOMALIA"
+              confirmacao === "ANULADO"
+                ? "mt-2 rounded-[12px] bg-zinc-950 p-3 text-[13px] font-semibold text-zinc-300 ring-1 ring-zinc-700"
+                : confirmacao === "ANOMALIA"
                 ? "mt-2 rounded-[12px] bg-red-950/60 p-3 text-[13px] font-semibold text-red-400 ring-1 ring-red-500/30"
                 : confirmacao === "OK_MANUAL"
                 ? "mt-2 rounded-[12px] bg-amber-950/60 p-3 text-[13px] font-semibold text-amber-300 ring-1 ring-amber-500/30"
@@ -1039,6 +1078,21 @@ function RegistrarTab({ seguranca, postoAtribuido, isCobertura, admin }: { segur
             {confirmacao === "OK" && "Registro enviado com sucesso (GPS capturado). Pode seguir para o próximo ponto."}
             {confirmacao === "OK_MANUAL" && "⚠️ Baixa manual realizada com observação e GPS!"}
             {confirmacao === "ANOMALIA" && "Anomalia registrada com GPS e enviada. Obrigado pelo reporte."}
+            {confirmacao === "ANULADO" && "↩️ Registo anulado. Pode voltar a ler o QR deste ponto."}
+            {ultimoRegistroId && confirmacao !== "ANULADO" && (
+              <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-white/10 pt-2.5">
+                <span className="text-[11px] font-medium text-zinc-400">
+                  Leitura errada? Anule nos próximos {JANELA_ANULACAO_MINUTOS} min.
+                </span>
+                <button
+                  onClick={anularUltimo}
+                  disabled={anulando}
+                  className="shrink-0 rounded-[10px] bg-zinc-900 px-3 py-1.5 text-[12px] font-bold text-zinc-100 ring-1 ring-zinc-600 disabled:opacity-50"
+                >
+                  {anulando ? "A anular..." : "↩️ Anular registo"}
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -1536,139 +1590,6 @@ function ChecklistTab({ seguranca, postoAtribuido, admin }: { seguranca: string;
   );
 }
 
-/* ---------------- QR Scanner Nativo ---------------- */
-
-declare global {
-  interface Window {
-    BarcodeDetector?: new (options?: { formats?: string[] }) => {
-      detect: (source: CanvasImageSource) => Promise<Array<{ rawValue: string }>>;
-    };
-  }
-}
-
-function QrScanner({
-  onDetect,
-  disabled,
-}: {
-  onDetect: (codigo: string) => void;
-  disabled: boolean;
-}) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const [cameraAtiva, setCameraAtiva] = useState(false);
-  const [erroCamera, setErroCamera] = useState("");
-  const ultimoLido = useRef<{ valor: string; em: number }>({ valor: "", em: 0 });
-
-  useEffect(() => {
-    if (!cameraAtiva) return;
-    let cancelado = false;
-    let intervalo: ReturnType<typeof setInterval> | undefined;
-
-    async function iniciar() {
-      if (!("BarcodeDetector" in window) || !window.BarcodeDetector) {
-        setErroCamera("Este navegador não tem leitor de QR nativo. Use o código manual abaixo.");
-        setCameraAtiva(false);
-        return;
-      }
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment" },
-        });
-        if (cancelado) {
-          stream.getTracks().forEach((t) => t.stop());
-          return;
-        }
-        streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
-        }
-        const detector = new window.BarcodeDetector({ formats: ["qr_code"] });
-        intervalo = setInterval(async () => {
-          if (!videoRef.current || disabled) return;
-          try {
-            const codigos = await detector.detect(videoRef.current);
-            const valor = codigos[0]?.rawValue?.trim();
-            if (!valor) return;
-            const agora = Date.now();
-            if (valor === ultimoLido.current.valor && agora - ultimoLido.current.em < 4000) return;
-            ultimoLido.current = { valor, em: agora };
-            
-            setCameraAtiva(false);
-            onDetect(valor);
-          } catch {
-            /* frame sem QR */
-          }
-        }, 500);
-      } catch {
-        if (!cancelado) {
-          setErroCamera("Não foi possível acessar a câmera. Use o código manual abaixo.");
-          setCameraAtiva(false);
-        }
-      }
-    }
-
-    iniciar();
-    return () => {
-      cancelado = true;
-      if (intervalo) clearInterval(intervalo);
-      streamRef.current?.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
-    };
-  }, [cameraAtiva]);
-
-  return (
-    <div className="rounded-[20px] bg-zinc-950 p-3 ring-1 ring-zinc-800">
-      <div className="flex items-center justify-between px-1 pb-2.5">
-        <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
-          Leitor de QR
-        </span>
-        <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-600">
-          {cameraAtiva ? "câmera ativa" : "câmera parada"}
-        </span>
-      </div>
-      <div className="relative aspect-[4/3] overflow-hidden rounded-[14px] bg-black">
-        {cameraAtiva ? (
-          <>
-            <video ref={videoRef} playsInline muted className="size-full object-cover" />
-            <span className="absolute left-4 top-4 size-7 border-l-[3px] border-t-[3px] border-amber-500"></span>
-            <span className="absolute right-4 top-4 size-7 border-r-[3px] border-t-[3px] border-amber-500"></span>
-            <span className="absolute bottom-4 left-4 size-7 border-b-[3px] border-l-[3px] border-amber-500"></span>
-            <span className="absolute bottom-4 right-4 size-7 border-b-[3px] border-r-[3px] border-amber-500"></span>
-            <span className="absolute bottom-3 left-1/2 -translate-x-1/2 whitespace-nowrap font-mono text-[10px] uppercase tracking-[0.2em] text-amber-400">
-              Enquadre o código
-            </span>
-          </>
-        ) : (
-          <div className="grid size-full place-items-center p-6 text-center">
-            <div>
-              <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-zinc-500">
-                {erroCamera || "Câmera desligada"}
-              </p>
-              {!erroCamera && (
-                <button
-                  onClick={() => setCameraAtiva(true)}
-                  className="mt-4 rounded-[12px] bg-gradient-to-r from-amber-500 to-amber-600 px-6 py-3 font-display text-[14px] font-bold text-zinc-950 shadow-md active:translate-y-0.5"
-                >
-                  Ativar câmera
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-      {cameraAtiva && (
-        <button
-          onClick={() => setCameraAtiva(false)}
-          className="mt-2.5 w-full rounded-[12px] bg-zinc-900 py-2.5 text-[12px] font-semibold uppercase tracking-[0.14em] text-zinc-400 ring-1 ring-zinc-800"
-        >
-          Desligar câmera
-        </button>
-      )}
-    </div>
-  );
-}
-
 /* ---------------- Histórico Inteligente com Filtro por Empresa/Posto, Segurança e Datas ---------------- */
 
 function HistoricoTab({ admin, segurancaAtual }: { admin: boolean; segurancaAtual: string }) {
@@ -1684,6 +1605,15 @@ function HistoricoTab({ admin, segurancaAtual }: { admin: boolean; segurancaAtua
   const [listaPostos, setListaPostos] = useState<string[]>([]);
   const [listaSegurancas, setListaSegurancas] = useState<string[]>([]);
   const [excluindoId, setExcluindoId] = useState<string | null>(null);
+  const [anulandoId, setAnulandoId] = useState<string | null>(null);
+  const [agora, setAgora] = useState(() => Date.now());
+
+  // Atualiza a contagem decrescente da anulação (e esconde o botão quando expira).
+  useEffect(() => {
+    if (admin) return;
+    const t = setInterval(() => setAgora(Date.now()), 30_000);
+    return () => clearInterval(t);
+  }, [admin]);
 
   async function carregar() {
     setCarregando(true);
@@ -1727,6 +1657,19 @@ function HistoricoTab({ admin, segurancaAtual }: { admin: boolean; segurancaAtua
       window.alert("Não foi possível excluir o registo.");
     } finally {
       setExcluindoId(null);
+    }
+  }
+
+  async function handleAnular(id: string) {
+    if (!window.confirm("Anular o seu último registo? Poderá voltar a ler o QR deste ponto.")) return;
+    setAnulandoId(id);
+    try {
+      await anularRegistroRecente(id, segurancaAtual);
+      setRegistros((prev) => prev.filter((r) => r.id !== id));
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "Não foi possível anular o registo.");
+    } finally {
+      setAnulandoId(null);
     }
   }
 
@@ -1780,6 +1723,8 @@ function HistoricoTab({ admin, segurancaAtual }: { admin: boolean; segurancaAtua
     return true;
   });
 
+  const registroAnulavel = admin ? null : encontrarRegistroAnulavel(registros, segurancaAtual, agora);
+
   const hoje = new Date().toDateString();
   const totalHoje = registrosFiltrados.filter((r) => new Date(r.created_at).toDateString() === hoje).length;
   const totalAnomalias = registrosFiltrados.filter((r) => r.status === "ANOMALIA").length;
@@ -1792,7 +1737,7 @@ function HistoricoTab({ admin, segurancaAtual }: { admin: boolean; segurancaAtua
             Filtros Administrativos e Relatórios (por Empresa/Posto, Segurança e Datas)
           </span>
 
-          <div className="flex flex-col gap-2">
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-4">
             <label className="flex flex-col gap-1 text-[11px] text-zinc-400 font-medium">
               🏢 Filtrar por Empresa / Posto
               <select
@@ -1825,31 +1770,31 @@ function HistoricoTab({ admin, segurancaAtual }: { admin: boolean; segurancaAtua
               </select>
             </label>
 
-            <div className="flex flex-wrap items-end gap-2 pt-1">
-              <label className="flex flex-1 flex-col gap-1 text-[11px] text-zinc-400">
+            <div className="grid grid-cols-2 items-end gap-2 md:col-span-2">
+              <label className="flex min-w-0 flex-col gap-1 text-[11px] text-zinc-400">
                 Data inicial
                 <input
                   type="date"
                   value={dataInicial}
                   max={dataFinal || undefined}
                   onChange={(e) => setDataInicial(e.target.value)}
-                  className="rounded-[10px] bg-zinc-900 px-2.5 py-2 text-[13px] text-zinc-100 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500"
+                  className="w-full min-w-0 rounded-[10px] bg-zinc-900 px-2.5 py-2 text-[13px] text-zinc-100 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500"
                 />
               </label>
-              <label className="flex flex-1 flex-col gap-1 text-[11px] text-zinc-400">
+              <label className="flex min-w-0 flex-col gap-1 text-[11px] text-zinc-400">
                 Data final
                 <input
                   type="date"
                   value={dataFinal}
                   min={dataInicial || undefined}
                   onChange={(e) => setDataFinal(e.target.value)}
-                  className="rounded-[10px] bg-zinc-900 px-2.5 py-2 text-[13px] text-zinc-100 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500"
+                  className="w-full min-w-0 rounded-[10px] bg-zinc-900 px-2.5 py-2 text-[13px] text-zinc-100 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500"
                 />
               </label>
             </div>
           </div>
 
-          <div className="flex gap-2 pt-1">
+          <div className="grid grid-cols-1 gap-2 pt-1 sm:grid-cols-2">
             <button
               onClick={limparFiltros}
               className="flex-1 rounded-[10px] bg-zinc-800 py-2 text-[12px] font-semibold text-zinc-200"
@@ -1981,7 +1926,7 @@ function HistoricoTab({ admin, segurancaAtual }: { admin: boolean; segurancaAtua
               )}
 
               {r.latitude && r.longitude && (
-                <div className="mt-2 flex items-center justify-between border-t border-zinc-800 pt-1.5 text-[11px] text-zinc-400">
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-zinc-800 pt-1.5 text-[11px] text-zinc-400">
                   <span>📍 GPS: {r.latitude.toFixed(5)}, {r.longitude.toFixed(5)}</span>
                   <a
                     href={`https://maps.google.com/?q=${r.latitude},${r.longitude}`}
@@ -1991,6 +1936,21 @@ function HistoricoTab({ admin, segurancaAtual }: { admin: boolean; segurancaAtua
                   >
                     Ver no Google Maps ↗
                   </a>
+                </div>
+              )}
+              {registroAnulavel?.id === r.id && (
+                <div className="mt-2.5 flex items-center justify-between gap-2 rounded-[10px] bg-amber-500/10 p-2.5 ring-1 ring-amber-500/30">
+                  <span className="text-[11px] font-medium leading-snug text-amber-300">
+                    Leitura errada? Pode anular durante mais{" "}
+                    {Math.max(1, Math.ceil(tempoRestanteAnulacao(r.created_at, agora) / 60_000))} min.
+                  </span>
+                  <button
+                    onClick={() => handleAnular(r.id)}
+                    disabled={anulandoId === r.id}
+                    className="shrink-0 rounded-[8px] bg-amber-500 px-3 py-1.5 text-[12px] font-bold text-zinc-950 disabled:opacity-50"
+                  >
+                    {anulandoId === r.id ? "A anular..." : "↩️ Anular"}
+                  </button>
                 </div>
               )}
               {admin && (
@@ -2125,52 +2085,74 @@ function OcorrenciasTab({ seguranca, admin }: { seguranca: string; admin: boolea
     setFiltroSeguranca("TODOS");
   }
 
+  const filtrosAtivos = Boolean(dataInicial || dataFinal || filtroSeguranca !== "TODOS");
+
   return (
-    <div>
-      <div className="rounded-[18px] bg-zinc-950 p-4 ring-1 ring-zinc-800 shadow-md mb-4">
-        <label className="block text-[12px] font-semibold uppercase tracking-[0.14em] text-zinc-300">
-          📖 Novo Registo no Livro Ata
-        </label>
-        <p className="mt-1 text-[12px] text-zinc-500">
-          Registre manutenções, atendimentos, visitas de gerentes ou ocorrências relevantes do plantão.
-        </p>
+    <div className="space-y-4">
+      {/* ---------- Novo registo ---------- */}
+      <section className="space-y-3 rounded-[18px] bg-zinc-950 p-4 shadow-md ring-1 ring-zinc-800">
+        <div className="flex items-start gap-3">
+          <span className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-amber-500/15 text-[17px] ring-1 ring-amber-500/30">
+            📖
+          </span>
+          <div className="min-w-0">
+            <h3 className="font-display text-[15px] font-bold leading-tight text-zinc-100">Novo registo no Livro Ata</h3>
+            <p className="mt-0.5 text-[12px] leading-snug text-zinc-500">
+              Manutenções, atendimentos, visitas de gerentes ou ocorrências relevantes do plantão.
+            </p>
+          </div>
+        </div>
 
-        <textarea
-          rows={3}
-          value={texto}
-          onChange={(e) => {
-            setTexto(e.target.value);
-            setErro("");
-            setSucesso(false);
-          }}
-          maxLength={1000}
-          placeholder="Ex.: Manutenção na central de alarme, apoio ao colaborador..."
-          className="mt-2.5 w-full resize-none rounded-[12px] bg-zinc-900 p-3 text-[15px] text-zinc-100 placeholder:text-zinc-600 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500"
-        />
-
-        {erro && <p className="mt-1.5 text-[13px] font-medium text-red-400">{erro}</p>}
-        {sucesso && <p className="mt-1.5 text-[13px] font-semibold text-emerald-400">Registrado com sucesso no Livro Ata!</p>}
+        <div>
+          <textarea
+            rows={4}
+            value={texto}
+            onChange={(e) => {
+              setTexto(e.target.value);
+              setErro("");
+              setSucesso(false);
+            }}
+            maxLength={1000}
+            placeholder="Ex.: Manutenção na central de alarme, apoio ao colaborador..."
+            className="block w-full resize-none rounded-[12px] bg-zinc-900 p-3 text-[15px] leading-relaxed text-zinc-100 placeholder:text-zinc-600 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500"
+          />
+          <div className="mt-1.5 flex items-center justify-between gap-2 px-0.5 text-[12px]">
+            <span className="min-w-0">
+              {erro && <span className="font-medium text-red-400">{erro}</span>}
+              {sucesso && <span className="font-semibold text-emerald-400">✓ Registado no Livro Ata!</span>}
+            </span>
+            <span className="shrink-0 font-mono text-[11px] text-zinc-600">{texto.length}/1000</span>
+          </div>
+        </div>
 
         <button
           onClick={enviarOcorrencia}
           disabled={enviando}
-          className="mt-3 w-full rounded-[14px] bg-gradient-to-r from-amber-500 to-amber-600 py-3 font-display text-[15px] font-bold text-zinc-950 shadow-md disabled:opacity-50 active:translate-y-0.5"
+          className="w-full rounded-[14px] bg-gradient-to-r from-amber-500 to-amber-600 py-3 font-display text-[15px] font-bold text-zinc-950 shadow-md disabled:opacity-50 active:translate-y-0.5"
         >
-          {enviando ? "A salvar..." : "Assinar e Salvar no Livro Ata"}
+          {enviando ? "A salvar..." : "✍️ Assinar e Salvar no Livro Ata"}
         </button>
-      </div>
+      </section>
 
-      <div className="mb-3 rounded-[14px] bg-zinc-950 p-3 ring-1 ring-zinc-800 space-y-2.5">
-        <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
-          🔍 Filtrar Livro Ata (Período e Segurança)
-        </span>
+      {/* ---------- Filtros ---------- */}
+      <section className="space-y-3 rounded-[16px] bg-zinc-950 p-4 ring-1 ring-zinc-800">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">🔍 Filtrar registos</span>
+          <button
+            onClick={limparFiltros}
+            disabled={!filtrosAtivos}
+            className="rounded-[8px] px-2 py-1 text-[12px] font-semibold text-amber-400 disabled:text-zinc-600"
+          >
+            Limpar
+          </button>
+        </div>
 
-        <label className="flex flex-col gap-1 text-[11px] text-zinc-400 font-medium">
-          Filtrar por segurança
+        <label className="flex flex-col gap-1 text-[11px] font-medium text-zinc-400">
+          Segurança
           <select
             value={filtroSeguranca}
             onChange={(e) => setFiltroSeguranca(e.target.value)}
-            className="rounded-[10px] bg-zinc-900 px-2.5 py-2 text-[13px] text-zinc-100 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500 font-normal"
+            className="w-full rounded-[10px] bg-zinc-900 px-3 py-2.5 text-[13px] font-normal text-zinc-100 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500"
           >
             <option value="TODOS">👥 Todos os seguranças</option>
             {listaSegurancas.map((b) => (
@@ -2181,80 +2163,75 @@ function OcorrenciasTab({ seguranca, admin }: { seguranca: string; admin: boolea
           </select>
         </label>
 
-        <div className="flex flex-wrap items-end gap-2">
-          <label className="flex flex-1 flex-col gap-1 text-[11px] text-zinc-400 font-medium">
+        <div className="grid grid-cols-2 gap-2">
+          <label className="flex min-w-0 flex-col gap-1 text-[11px] font-medium text-zinc-400">
             Data inicial
             <input
               type="date"
               value={dataInicial}
               max={dataFinal || undefined}
               onChange={(e) => setDataInicial(e.target.value)}
-              className="rounded-[10px] bg-zinc-900 px-2.5 py-2 text-[13px] text-zinc-100 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500 font-normal"
+              className="w-full min-w-0 rounded-[10px] bg-zinc-900 px-3 py-2.5 text-[13px] font-normal text-zinc-100 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500"
             />
           </label>
-          <label className="flex flex-1 flex-col gap-1 text-[11px] text-zinc-400 font-medium">
+          <label className="flex min-w-0 flex-col gap-1 text-[11px] font-medium text-zinc-400">
             Data final
             <input
               type="date"
               value={dataFinal}
               min={dataInicial || undefined}
               onChange={(e) => setDataFinal(e.target.value)}
-              className="rounded-[10px] bg-zinc-900 px-2.5 py-2 text-[13px] text-zinc-100 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500 font-normal"
+              className="w-full min-w-0 rounded-[10px] bg-zinc-900 px-3 py-2.5 text-[13px] font-normal text-zinc-100 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500"
             />
           </label>
-          <button
-            onClick={limparFiltros}
-            disabled={!dataInicial && !dataFinal && filtroSeguranca === "TODOS"}
-            className="rounded-[10px] bg-zinc-800 px-3 py-2 text-[12px] font-semibold text-zinc-200 disabled:opacity-40"
-          >
-            Limpar
-          </button>
         </div>
-      </div>
+      </section>
 
-      <button
-        onClick={() => gerarRelatorioLivroAta(lista)}
-        disabled={carregando || lista.length === 0}
-        className="mb-4 w-full rounded-[12px] bg-zinc-800 py-3 font-display text-[13px] font-semibold tracking-wide text-zinc-100 shadow-md disabled:opacity-50 active:translate-y-0.5"
-      >
-        🖨️ Imprimir / Gerar Relatório do Livro Ata
-      </button>
-
-      <div className="mb-2.5 flex items-center justify-between px-1">
+      {/* ---------- Lista ---------- */}
+      <div className="flex items-center justify-between gap-2 px-1">
         <p className="font-display text-[15px] font-semibold text-zinc-200">
-          Registros no Livro Ata ({lista.length})
+          Registos <span className="text-zinc-500">({lista.length})</span>
         </p>
+        <button
+          onClick={() => gerarRelatorioLivroAta(lista)}
+          disabled={carregando || lista.length === 0}
+          className="rounded-[10px] bg-zinc-800 px-3 py-2 text-[12px] font-semibold text-zinc-100 shadow-md disabled:opacity-50 active:translate-y-0.5"
+        >
+          🖨️ Imprimir
+        </button>
       </div>
 
       {carregando ? (
-        <p className="text-center text-[13px] text-zinc-500 py-4">A carregar registros do Livro Ata...</p>
+        <p className="py-4 text-center text-[13px] text-zinc-500">A carregar registos do Livro Ata...</p>
       ) : lista.length === 0 ? (
         <p className="rounded-[14px] bg-zinc-950 p-5 text-center text-[14px] text-zinc-500 ring-1 ring-zinc-800">
           Nenhum registo encontrado com os filtros selecionados.
         </p>
       ) : (
-        <div className="space-y-2.5">
+        <ol className="space-y-2.5">
           {lista.map((item) => (
-            <div
-              key={item.id}
-              className="rounded-[14px] bg-zinc-950 p-3.5 ring-1 ring-zinc-800 shadow-md"
-            >
-              <div className="flex items-center justify-between border-b border-zinc-800 pb-2 mb-2">
-                <span className="text-[12px] font-bold text-amber-400">{item.seguranca}</span>
-                <span className="font-mono text-[11px] text-zinc-500">{formatarDataHora(item.created_at)}</span>
+            <li key={item.id} className="rounded-[14px] bg-zinc-950 p-3.5 shadow-md ring-1 ring-zinc-800">
+              <div className="mb-2 flex items-center gap-2.5 border-b border-zinc-800 pb-2">
+                <span className="grid size-7 shrink-0 place-items-center rounded-full bg-amber-500/20 text-[12px] font-bold text-amber-400">
+                  {item.seguranca.charAt(0).toUpperCase()}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-[13px] font-bold text-amber-400">{item.seguranca}</span>
+                <span className="shrink-0 font-mono text-[11px] text-zinc-500">{formatarDataHora(item.created_at)}</span>
               </div>
-              <p className="text-[14px] text-zinc-300 leading-relaxed whitespace-pre-line">{item.descricao}</p>
+              <p className="whitespace-pre-line break-words text-[14px] leading-relaxed text-zinc-300">{item.descricao}</p>
               {admin && (
-                <button
-                  onClick={() => excluirOcorrencia(item.id)}
-                  className="mt-2.5 rounded-[8px] bg-red-950 px-2.5 py-1 text-[11px] font-semibold text-red-400 ring-1 ring-red-500/30"
-                >
-                  Excluir registo
-                </button>
+                <div className="mt-2.5 flex justify-end">
+                  <button
+                    onClick={() => excluirOcorrencia(item.id)}
+                    className="rounded-[8px] bg-red-950 px-2.5 py-1 text-[11px] font-semibold text-red-400 ring-1 ring-red-500/30"
+                  >
+                    Excluir registo
+                  </button>
+                </div>
               )}
-            </div>
+            </li>
           ))}
-        </div>
+        </ol>
       )}
     </div>
   );
@@ -2455,18 +2432,6 @@ function gerarRelatorio(registros: RegistroRonda[], posto: string) {
   }
 }
 
-const ENTIDADES: Record<string, string> = {
-  "&": String.fromCharCode(38, 97, 109, 112, 59),
-  "<": String.fromCharCode(38, 108, 116, 59),
-  ">": String.fromCharCode(38, 103, 116, 59),
-  '"': String.fromCharCode(38, 113, 117, 111, 116, 59),
-  "'": String.fromCharCode(38, 35, 51, 57, 59),
-};
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (ch) => ENTIDADES[ch] ?? ch);
-}
-
 function formatarHora(iso: string) {
   const d = new Date(iso);
   const hoje = new Date().toDateString() === d.toDateString();
@@ -2531,13 +2496,6 @@ function AdminTab() {
   const [segurancas, setSegurancas] = useState<SegurancaDb[]>([]);
   const [carregando, setCarregando] = useState(true);
 
-  // Estados de Cadastro / Edição de Local (Posto)
-  const [editandoLocalId, setEditandoLocalId] = useState<string | null>(null);
-  const [predio, setPredio] = useState("");
-  const [localNome, setLocalNome] = useState("");
-  const [qrHash, setQrHash] = useState("");
-  const [salvandoLocal, setSalvandoLocal] = useState(false);
-
   // Estados de Cadastro / Edição de Segurança
   const [editandoSegId, setEditandoSegId] = useState<string | null>(null);
   const [nomeSeg, setNomeSeg] = useState("");
@@ -2568,74 +2526,6 @@ function AdminTab() {
   useEffect(() => {
     carregarDadosAdmin();
   }, []);
-
-  function prepararEdicaoLocal(loc: LocalRonda) {
-    setEditandoLocalId(loc.id);
-    setPredio(loc.predio);
-    setLocalNome(loc.local);
-    setQrHash(loc.qr_code_hash);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }
-
-  function cancelarEdicaoLocal() {
-    setEditandoLocalId(null);
-    setPredio("");
-    setLocalNome("");
-    setQrHash("");
-  }
-
-  async function salvarLocal(e: React.FormEvent) {
-    e.preventDefault();
-    if (!predio.trim() || !localNome.trim() || !qrHash.trim()) {
-      window.alert("Preencha todos os campos do local de ronda.");
-      return;
-    }
-    setSalvandoLocal(true);
-    try {
-      if (editandoLocalId) {
-        const { error } = await supabase
-          .from("locais_ronda")
-          .update({
-            predio: predio.trim(),
-            local: localNome.trim(),
-            qr_code_hash: qrHash.trim(),
-          })
-          .eq("id", editandoLocalId);
-
-        if (error) throw error;
-        window.alert("Local atualizado com sucesso!");
-      } else {
-        const { error } = await supabase.from("locais_ronda").insert([
-          {
-            predio: predio.trim(),
-            local: localNome.trim(),
-            qr_code_hash: qrHash.trim(),
-          },
-        ]);
-        if (error) throw error;
-        window.alert("Local cadastrado com sucesso!");
-      }
-
-      cancelarEdicaoLocal();
-      carregarDadosAdmin();
-    } catch (err: any) {
-      window.alert(err?.message || "Erro ao salvar local.");
-    } finally {
-      setSalvandoLocal(false);
-    }
-  }
-
-  async function excluirLocal(id: string) {
-    if (!window.confirm("Deseja excluir este local de ronda?")) return;
-    try {
-      const { error } = await supabase.from("locais_ronda").delete().eq("id", id);
-      if (error) throw error;
-      setLocais((prev) => prev.filter((l) => l.id !== id));
-      if (editandoLocalId === id) cancelarEdicaoLocal();
-    } catch {
-      window.alert("Erro ao excluir local.");
-    }
-  }
 
   function prepararEdicaoSeguranca(seg: SegurancaDb) {
     setEditandoSegId(seg.id);
@@ -2723,10 +2613,10 @@ function AdminTab() {
 
   return (
     <div className="space-y-6">
-      <div className="rounded-[18px] bg-zinc-900 p-6 ring-1 ring-amber-500/30 shadow-xl">
-        <h3 className="font-display text-[18px] font-bold text-amber-400">⚙️ Painel de Gestão Falcon Serviços</h3>
-        <p className="mt-1 text-[14px] text-zinc-400">
-          Gerencie autonomamente os locais de ronda e a equipa de seguranças por posto.
+      <div className="rounded-[18px] bg-zinc-900 p-4 ring-1 ring-amber-500/30 shadow-xl sm:p-6">
+        <h3 className="font-display text-[17px] font-bold text-amber-400 sm:text-[18px]">⚙️ Painel de Gestão Falcon Serviços</h3>
+        <p className="mt-1 text-[13px] text-zinc-400 sm:text-[14px]">
+          Gerencie autonomamente os locais de ronda, os respetivos QR codes e a equipa de seguranças por posto.
         </p>
       </div>
 
@@ -2734,104 +2624,12 @@ function AdminTab() {
         <p className="text-center text-[13px] text-zinc-500 py-4">A carregar dados administrativos...</p>
       ) : (
         <>
-          {/* SECÇÃO DE LOCAIS / POSTOS */}
-          <div className="rounded-[18px] bg-zinc-900 p-6 ring-1 ring-zinc-800 shadow-xl space-y-4">
-            <div className="flex items-center justify-between">
-              <h4 className="font-display text-[16px] font-bold text-zinc-100">
-                {editandoLocalId ? "✏️ Editar Local de Ronda" : "📍 Cadastrar Novo Local de Ronda"}
-              </h4>
-              {editandoLocalId && (
-                <button
-                  onClick={cancelarEdicaoLocal}
-                  className="rounded-lg bg-zinc-800 px-3 py-1.5 text-[12px] font-semibold text-zinc-300"
-                >
-                  Cancelar Edição
-                </button>
-              )}
-            </div>
-
-            <form onSubmit={salvarLocal} className="space-y-4">
-              <div>
-                <label className="block text-[12px] font-semibold text-zinc-400 mb-1">Nome do Posto / Prédio (Ex: MERCADÃO 44)</label>
-                <input
-                  type="text"
-                  value={predio}
-                  onChange={(e) => setPredio(e.target.value)}
-                  placeholder="Ex.: MERCADÃO 44"
-                  className="w-full rounded-xl bg-zinc-950 p-3 text-[14px] text-zinc-100 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500"
-                />
-              </div>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div>
-                  <label className="block text-[12px] font-semibold text-zinc-400 mb-1">Descrição do Local</label>
-                  <input
-                    type="text"
-                    value={localNome}
-                    onChange={(e) => setLocalNome(e.target.value)}
-                    placeholder="Ex.: Portaria"
-                    className="w-full rounded-xl bg-zinc-950 p-3 text-[14px] text-zinc-100 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[12px] font-semibold text-zinc-400 mb-1">Código QR / Hash</label>
-                  <input
-                    type="text"
-                    value={qrHash}
-                    onChange={(e) => setQrHash(e.target.value)}
-                    placeholder="Ex.: PORT-01-MERCADO"
-                    className="w-full rounded-xl bg-zinc-950 p-3 font-mono text-[14px] text-zinc-100 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500"
-                  />
-                </div>
-              </div>
-              <button
-                type="submit"
-                disabled={salvandoLocal}
-                className={
-                  editandoLocalId
-                    ? "w-full rounded-xl bg-amber-500 py-3.5 font-display text-[15px] font-bold text-zinc-950 shadow-md active:translate-y-0.5"
-                    : "w-full rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 py-3.5 font-display text-[15px] font-bold text-zinc-950 shadow-md active:translate-y-0.5"
-                }
-              >
-                {salvandoLocal ? "A guardar..." : editandoLocalId ? "Salvar Alterações do Local" : "+ Adicionar Local de Ronda"}
-              </button>
-            </form>
-
-            <div className="border-t border-zinc-800 pt-5 mt-5">
-              <p className="text-[13px] font-semibold text-zinc-300 mb-3">Locais Cadastrados ({locais.length})</p>
-              {locais.length === 0 ? (
-                <p className="text-[13px] text-zinc-600">Nenhum local cadastrado ainda.</p>
-              ) : (
-                <div className="space-y-2.5 max-h-60 overflow-y-auto">
-                  {locais.map((l) => (
-                    <div key={l.id} className="flex items-center justify-between rounded-xl bg-zinc-950 p-3 text-[14px] ring-1 ring-zinc-800">
-                      <div>
-                        <p className="font-semibold text-zinc-200">{l.predio} — {l.local}</p>
-                        <p className="text-[12px] text-zinc-500"><code className="font-mono">{l.qr_code_hash}</code></p>
-                      </div>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => prepararEdicaoLocal(l)}
-                          className="rounded-lg bg-amber-500/20 px-3 py-1.5 text-[12px] font-semibold text-amber-400 ring-1 ring-amber-500/30"
-                        >
-                          Editar
-                        </button>
-                        <button
-                          onClick={() => excluirLocal(l.id)}
-                          className="rounded-lg bg-red-950 px-3 py-1.5 text-[12px] font-semibold text-red-400 ring-1 ring-red-500/30"
-                        >
-                          Excluir
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
+          {/* SECÇÃO DE LOCAIS / POSTOS + QR CODES */}
+          <LocaisQrSection locais={locais} onAlterado={carregarDadosAdmin} />
 
           {/* SECÇÃO DE SEGURANÇAS */}
-          <div className="rounded-[18px] bg-zinc-900 p-6 ring-1 ring-zinc-800 shadow-xl space-y-4">
-            <div className="flex items-center justify-between">
+          <div className="space-y-4 rounded-[18px] bg-zinc-900 p-4 shadow-xl ring-1 ring-zinc-800 sm:p-6">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <h4 className="font-display text-[16px] font-bold text-zinc-100">
                 {editandoSegId ? "✏️ Editar Segurança" : "🛡️ Cadastrar Novo Segurança / Postos Atribuídos"}
               </h4>
@@ -2943,14 +2741,14 @@ function AdminTab() {
               {segurancas.length === 0 ? (
                 <p className="text-[13px] text-zinc-600">Nenhum segurança cadastrado.</p>
               ) : (
-                <div className="space-y-2.5 max-h-60 overflow-y-auto">
+                <div className="max-h-80 space-y-2.5 overflow-y-auto pr-1">
                   {segurancas.map((b) => (
-                    <div key={b.id} className="flex items-center justify-between rounded-xl bg-zinc-950 p-3 text-[14px] ring-1 ring-zinc-800">
-                      <div>
-                        <p className="font-semibold text-zinc-200">{b.nome} <span className="text-xs font-normal text-zinc-500">({b.cargo} • {b.tipo_contrato || "CLT"})</span></p>
-                        <p className="text-[12px] text-amber-400 font-medium">Postos: {b.posto_atribuido || "Geral"}</p>
+                    <div key={b.id} className="flex flex-col gap-2 rounded-xl bg-zinc-950 p-3 text-[14px] ring-1 ring-zinc-800 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0">
+                        <p className="break-words font-semibold text-zinc-200">{b.nome} <span className="text-xs font-normal text-zinc-500">({b.cargo} • {b.tipo_contrato || "CLT"})</span></p>
+                        <p className="break-words text-[12px] font-medium text-amber-400">Postos: {b.posto_atribuido || "Geral"}</p>
                       </div>
-                      <div className="flex gap-2">
+                      <div className="grid shrink-0 grid-cols-2 gap-2 sm:flex">
                         <button
                           onClick={() => prepararEdicaoSeguranca(b)}
                           className="rounded-lg bg-amber-500/20 px-3 py-1.5 text-[12px] font-semibold text-amber-400 ring-1 ring-amber-500/30"
@@ -3136,14 +2934,14 @@ function FinanceiroPjTab() {
 
   return (
     <div className="space-y-6">
-      <div className="rounded-[18px] bg-zinc-900 p-6 ring-1 ring-amber-500/30 shadow-xl">
-        <h3 className="font-display text-[18px] font-bold text-amber-400">💰 Gestão Financeira — Colaboradores PJ</h3>
+      <div className="rounded-[18px] bg-zinc-900 p-4 ring-1 ring-amber-500/30 shadow-xl sm:p-6">
+        <h3 className="font-display text-[17px] font-bold text-amber-400 sm:text-[18px]">💰 Gestão Financeira — Colaboradores PJ</h3>
         <p className="mt-1 text-[14px] text-zinc-400">
           Cálculo automático de horas trabalhadas, plantões e valores a pagar por colaborador PJ.
         </p>
       </div>
 
-      <div className="rounded-[18px] bg-zinc-900 p-6 ring-1 ring-zinc-800 shadow-xl space-y-4">
+      <div className="space-y-4 rounded-[18px] bg-zinc-900 p-4 shadow-xl ring-1 ring-zinc-800 sm:p-6">
         <span className="text-[12px] font-semibold uppercase tracking-[0.16em] text-zinc-400">
           ⚙️ Configuração e Filtros
         </span>
@@ -3207,12 +3005,12 @@ function FinanceiroPjTab() {
           {segurancasPjFiltrados.map((pj) => {
             const resumo = calcularResumoPJ(pj.nome);
             return (
-              <div key={pj.id} className="rounded-[16px] bg-zinc-900 p-5 ring-1 ring-zinc-800 shadow-xl flex items-center justify-between">
-                <div>
+              <div key={pj.id} className="flex flex-col gap-3 rounded-[16px] bg-zinc-900 p-4 shadow-xl ring-1 ring-zinc-800 sm:flex-row sm:items-center sm:justify-between sm:p-5">
+                <div className="min-w-0">
                   <p className="font-display text-[16px] font-bold text-zinc-100">{pj.nome}</p>
                   <p className="text-[13px] text-zinc-400 mt-0.5">Posto: <span className="font-semibold text-amber-400">{pj.posto_atribuido || "Geral"}</span> • {resumo.dias} dias trabalhados ({resumo.horas}h)</p>
                 </div>
-                <div className="text-right">
+                <div className="shrink-0 border-t border-zinc-800 pt-2 sm:border-0 sm:pt-0 sm:text-right">
                   <p className="font-mono text-[20px] font-bold text-amber-400">
                     R$ {resumo.total.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </p>

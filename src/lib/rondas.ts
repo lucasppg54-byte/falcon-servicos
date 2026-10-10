@@ -1,4 +1,10 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
+import { encontrarRegistroAnulavel, JANELA_ANULACAO_MINUTOS, type RegistroAnulavel } from "@/lib/anulacao";
+
+// O types.ts gerado está desatualizado face ao esquema real (colunas seguranca,
+// gravidade, foto_url...). Usamos um cliente sem tipos para estas tabelas.
+const db = supabase as unknown as SupabaseClient;
 
 const ADMIN_SEGURANCAS_PADRAO = ["Falcon (Admin)"];
 
@@ -119,31 +125,11 @@ export async function registrarRonda(input: {
   fotoFile?: File | null;
   isCobertura?: boolean;
   postoCobertura?: string;
-}): Promise<void> {
+}): Promise<{ id: string; created_at: string }> {
   const latFinal = input.latitude ?? -16.6869;
   const lonFinal = input.longitude ?? -49.2648;
 
-  let fotoUrlFinal: string | null = null;
-
-  if (input.fotoFile) {
-    const nomeArquivo = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}.jpg`;
-    const { error: uploadError } = await supabase.storage
-      .from("rondas-fotos")
-      .upload(nomeArquivo, input.fotoFile, {
-        cacheControl: "3600",
-        upsert: false,
-      });
-
-    if (uploadError) {
-      throw new Error(`Erro ao enviar foto: ${uploadError.message}`);
-    }
-
-    const { data: publicData } = supabase.storage
-      .from("rondas-fotos")
-      .getPublicUrl(nomeArquivo);
-
-    fotoUrlFinal = publicData.publicUrl;
-  }
+  const fotoUrlFinal = input.fotoFile ? await enviarFotoAnomalia(input.fotoFile) : null;
 
   let descFinal = input.descricao ?? null;
   if (input.isCobertura) {
@@ -163,8 +149,92 @@ export async function registrarRonda(input: {
     foto_url: fotoUrlFinal,
   };
 
-  const { error } = await supabase.from("registros_rondas").insert(payload);
+  const { data, error } = await db
+    .from("registros_rondas")
+    .insert(payload)
+    .select("id, created_at")
+    .single();
   if (error) throw error;
+  return data as { id: string; created_at: string };
+}
+
+/* ---------------- Storage de fotos de anomalias ---------------- */
+
+/** Bucket público do Supabase Storage onde ficam as fotos das anomalias. */
+export const BUCKET_FOTOS = "rondas";
+const PASTA_FOTOS = "anomalias";
+
+function extensaoDaFoto(file: File): string {
+  const doNome = file.name.split(".").pop()?.toLowerCase();
+  if (doNome && /^(jpe?g|png|webp|heic|heif)$/.test(doNome)) return doNome;
+  const doTipo = file.type.split("/")[1]?.toLowerCase();
+  return doTipo && /^(jpe?g|png|webp|heic|heif)$/.test(doTipo) ? doTipo : "jpg";
+}
+
+export async function enviarFotoAnomalia(file: File): Promise<string> {
+  const caminho = `${PASTA_FOTOS}/${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${extensaoDaFoto(file)}`;
+  const { error } = await supabase.storage.from(BUCKET_FOTOS).upload(caminho, file, {
+    cacheControl: "3600",
+    contentType: file.type || "image/jpeg",
+    upsert: false,
+  });
+
+  if (error) {
+    const semBucket = /bucket not found/i.test(error.message);
+    throw new Error(
+      semBucket
+        ? `Erro ao enviar foto: o bucket "${BUCKET_FOTOS}" não existe no Supabase Storage.`
+        : `Erro ao enviar foto: ${error.message}`,
+    );
+  }
+
+  return supabase.storage.from(BUCKET_FOTOS).getPublicUrl(caminho).data.publicUrl;
+}
+
+/** Extrai o caminho do objeto a partir do URL público (para poder apagá-lo). */
+export function caminhoDaFotoNoBucket(fotoUrl: string): string | null {
+  const marcador = `/object/public/${BUCKET_FOTOS}/`;
+  const idx = fotoUrl.indexOf(marcador);
+  if (idx === -1) return null;
+  return decodeURIComponent(fotoUrl.slice(idx + marcador.length).split("?")[0] ?? "") || null;
+}
+
+/* ---------------- Anulação do último registo pelo próprio vigilante ---------------- */
+
+/**
+ * Apaga o último registo do vigilante, desde que ainda seja o mais recente dele
+ * e esteja dentro da janela de anulação. Revalida tudo na BD antes de apagar.
+ */
+export async function anularRegistroRecente(id: string, seguranca: string): Promise<void> {
+  const { data: ultimos, error: erroBusca } = await db
+    .from("registros_rondas")
+    .select("id, seguranca, descricao, created_at, foto_url")
+    .eq("seguranca", seguranca)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  if (erroBusca) throw erroBusca;
+
+  const ultimo = (ultimos ?? [])[0] as (RegistroAnulavel & { foto_url: string | null }) | undefined;
+  if (!ultimo || ultimo.id !== id || !encontrarRegistroAnulavel([ultimo], seguranca)) {
+    throw new Error(
+      `Só é possível anular o seu registo mais recente, até ${JANELA_ANULACAO_MINUTOS} minutos após a leitura.`,
+    );
+  }
+
+  const { data: apagados, error } = await db
+    .from("registros_rondas")
+    .delete()
+    .eq("id", id)
+    .eq("seguranca", seguranca)
+    .select("id");
+  if (error) throw error;
+  if (!apagados || apagados.length === 0) {
+    throw new Error("A base de dados recusou a anulação (permissões). Contacte o administrador.");
+  }
+
+  // Limpeza da foto é "melhor esforço": o registo já foi anulado.
+  const caminho = ultimo.foto_url ? caminhoDaFotoNoBucket(ultimo.foto_url) : null;
+  if (caminho) await supabase.storage.from(BUCKET_FOTOS).remove([caminho]).catch(() => undefined);
 }
 
 export async function marcarComoCorrigido(id: string): Promise<void> {

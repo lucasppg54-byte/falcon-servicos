@@ -1,8 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Camera, Download, Images, Search, Trash2 } from "lucide-react";
 import {
   buscarLocalPorQr,
   ehAdminSeguranca,
+  excluirRegistro,
   listarRegistros,
   normalizarCodigoQr,
   registrarRonda,
@@ -10,6 +12,12 @@ import {
   type LocalRonda,
   type RegistroRonda,
 } from "@/lib/rondas";
+import { extrairFotos } from "@/lib/fotos";
+import { ehIos, gravarPreferenciaGaleria, guardarNaGaleria, lerPreferenciaGaleria } from "@/lib/galeria";
+import { ehMarcacaoPlantao, podeExcluirRegistro } from "@/lib/marcacoes";
+import { baixarQrPng, gerarProximoCodigo } from "@/lib/qr";
+import { QrScanner } from "@/components/QrScanner";
+import { LocaisQrSection, QrPreview } from "@/components/LocaisQrSection";
 import { supabase } from "@/integrations/supabase/client";
 
 export const Route = createFileRoute("/")({
@@ -469,62 +477,72 @@ function MainScreen({
   if (admin) {
     return (
       <div className="flex min-h-screen flex-col bg-black font-body text-zinc-100">
-        <header className="flex items-center justify-between bg-zinc-950 px-8 py-4 border-b border-zinc-800 shadow-xl">
-          <div className="flex items-center gap-3">
-            <div className="flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-zinc-900 ring-1 ring-zinc-700">
+        <header className="flex items-center justify-between gap-3 bg-zinc-950 px-4 py-2.5 border-b border-zinc-800 shadow-xl sm:px-8 sm:py-4">
+          <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
+            <div className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-zinc-900 ring-1 ring-zinc-700 sm:size-11 sm:rounded-xl">
               <img src="/logo.jpeg" alt="Falcon Serviços" className="size-full object-cover" />
             </div>
-            <div>
-              <p className="font-display text-[18px] font-bold text-zinc-100">Falcon Serviços — Centro de Comando (Admin)</p>
-              <p className="text-[11px] uppercase tracking-[0.18em] text-amber-400 font-semibold">Painel Executivo Comercial & Gestão</p>
+            <div className="min-w-0 leading-tight">
+              <p className="truncate font-display text-[15px] font-bold text-zinc-100 sm:text-[18px]">
+                Falcon Serviços <span className="hidden sm:inline">— Centro de Comando (Admin)</span>
+              </p>
+              <p className="truncate text-[10px] uppercase tracking-[0.16em] text-amber-400 font-semibold sm:text-[11px] sm:tracking-[0.18em]">
+                <span className="sm:hidden">Centro de Comando</span>
+                <span className="hidden sm:inline">Painel Executivo Comercial & Gestão</span>
+              </p>
             </div>
           </div>
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 rounded-full bg-zinc-900 px-3.5 py-1.5 border border-zinc-800">
+          <div className="flex shrink-0 items-center gap-2 sm:gap-4">
+            <div
+              className="flex items-center gap-2 rounded-full bg-zinc-900 p-2 border border-zinc-800 sm:px-3.5 sm:py-1.5"
+              title="Sistema Online (Supabase)"
+            >
               <span className="size-2.5 rounded-full bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.2)]"></span>
-              <span className="text-[11px] font-semibold text-emerald-400 uppercase">Sistema Online (Supabase)</span>
+              <span className="hidden text-[11px] font-semibold text-emerald-400 uppercase sm:inline">Sistema Online (Supabase)</span>
             </div>
             <button
               onClick={onTrocar}
-              className="rounded-xl bg-zinc-900 px-4 py-2 text-[12px] font-semibold text-zinc-300 ring-1 ring-zinc-700 hover:bg-zinc-800"
+              className="rounded-lg bg-zinc-900 px-3 py-1.5 text-[12px] font-semibold text-zinc-300 ring-1 ring-zinc-700 hover:bg-zinc-800 sm:rounded-xl sm:px-4 sm:py-2"
             >
-              Sair / Trocar
+              Sair<span className="hidden sm:inline"> / Trocar</span>
             </button>
           </div>
         </header>
 
-        {/* ABAS DO ADMIN */}
-        <div className="bg-zinc-950 px-8 py-3 border-b border-zinc-800 flex flex-wrap gap-2">
-          <TabButton active={tab === "registrar"} onClick={() => setTab("registrar")}>
-            📊 Visão Geral (Dashboard)
-          </TabButton>
-          <TabButton active={tab === "historico"} onClick={() => setTab("historico")}>
-            📋 Histórico & Relatórios
-          </TabButton>
-          <TabButton active={tab === "ocorrencias"} onClick={() => setTab("ocorrencias")}>
-            📖 Livro Ata
-          </TabButton>
-          <TabButton active={tab === "financeiro"} onClick={() => setTab("financeiro")}>
-            💰 Financeiro PJ
-          </TabButton>
-          <TabButton active={tab === "admin"} onClick={() => setTab("admin")}>
-            ⚙️ Gestão de Postos & Equipa
-          </TabButton>
-        </div>
+        {/* ABAS DO ADMIN — deslizam na horizontal em ecrãs pequenos */}
+        <nav className="bg-zinc-950 border-b border-zinc-800">
+          <div className="flex gap-2 overflow-x-auto px-4 py-2.5 snap-x [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:flex-wrap sm:px-8 sm:py-3">
+            <TabButton variant="scroll" active={tab === "registrar"} onClick={() => setTab("registrar")}>
+              📊 Visão Geral<span className="hidden sm:inline"> (Dashboard)</span>
+            </TabButton>
+            <TabButton variant="scroll" active={tab === "historico"} onClick={() => setTab("historico")}>
+              📋 Histórico<span className="hidden sm:inline"> & Relatórios</span>
+            </TabButton>
+            <TabButton variant="scroll" active={tab === "ocorrencias"} onClick={() => setTab("ocorrencias")}>
+              📖 Livro Ata
+            </TabButton>
+            <TabButton variant="scroll" active={tab === "financeiro"} onClick={() => setTab("financeiro")}>
+              💰 Financeiro PJ
+            </TabButton>
+            <TabButton variant="scroll" active={tab === "admin"} onClick={() => setTab("admin")}>
+              ⚙️ Postos & Equipa
+            </TabButton>
+          </div>
+        </nav>
 
-        <div className="flex-1 p-8 bg-zinc-950/40 overflow-y-auto">
-          <div className="max-w-7xl mx-auto space-y-6">
+        <div className="flex-1 p-4 bg-zinc-950/40 overflow-y-auto sm:p-8">
+          <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6">
             {tab === "registrar" && (
-              <div className="space-y-6">
-                {/* ---------------- CARD DE INDICADORES PRINCIPAIS (ESTILO RADAR FÁCIL) ---------------- */}
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+              <div className="space-y-4 sm:space-y-6">
+                {/* ---------------- CARD DE INDICADORES PRINCIPAIS (2×2 no telemóvel) ---------------- */}
+                <div className="grid grid-cols-2 gap-3 sm:gap-6 md:grid-cols-4">
                   {/* Card Cumprimento Médio */}
-                  <div className="rounded-2xl bg-gradient-to-br from-indigo-900 via-zinc-900 to-zinc-950 p-6 ring-1 ring-indigo-500/30 shadow-xl flex flex-col justify-between">
+                  <div className="rounded-2xl bg-gradient-to-br from-indigo-900 via-zinc-900 to-zinc-950 p-4 ring-1 ring-indigo-500/30 shadow-xl flex flex-col justify-between sm:p-6">
                     <div>
-                      <p className="text-[12px] font-semibold text-indigo-300 uppercase tracking-wider">Cumprimento Médio</p>
-                      <div className="my-4 flex items-center justify-center">
-                        <div className="relative flex size-24 items-center justify-center rounded-full bg-indigo-500/20 ring-4 ring-indigo-500/40 shadow-inner">
-                          <span className="font-display text-[24px] font-bold text-white">100%</span>
+                      <p className="text-[11px] font-semibold text-indigo-300 uppercase tracking-wider sm:text-[12px]">Cumprimento Médio</p>
+                      <div className="my-3 flex items-center justify-center sm:my-4">
+                        <div className="relative flex size-16 items-center justify-center rounded-full bg-indigo-500/20 ring-4 ring-indigo-500/40 shadow-inner sm:size-24">
+                          <span className="font-display text-[18px] font-bold text-white sm:text-[24px]">100%</span>
                         </div>
                       </div>
                     </div>
@@ -532,45 +550,45 @@ function MainScreen({
                   </div>
 
                   {/* Card Colaboradores */}
-                  <div className="rounded-2xl bg-zinc-900 p-6 ring-1 ring-zinc-800 shadow-xl flex flex-col justify-between">
+                  <div className="rounded-2xl bg-zinc-900 p-4 ring-1 ring-zinc-800 shadow-xl flex flex-col justify-between sm:p-6">
                     <div>
-                      <p className="text-[12px] font-semibold text-zinc-400 uppercase tracking-wider">Colaboradores</p>
-                      <p className="font-display text-[32px] font-bold text-zinc-100 mt-3">{totalColaboradores}</p>
+                      <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider sm:text-[12px]">Colaboradores</p>
+                      <p className="font-display text-[26px] font-bold text-zinc-100 mt-2 sm:text-[32px] sm:mt-3">{totalColaboradores}</p>
                       <p className="text-[12px] text-emerald-400 mt-1">Ativos no sistema</p>
                     </div>
                     <button
                       onClick={() => setTab("admin")}
-                      className="text-left text-[12px] font-medium text-indigo-400 hover:underline cursor-pointer mt-4 bg-transparent border-none p-0"
+                      className="text-left text-[12px] font-medium text-indigo-400 hover:underline cursor-pointer mt-3 bg-transparent border-none p-0 sm:mt-4"
                     >
                       Ver detalhes ›
                     </button>
                   </div>
 
                   {/* Card Atividades no Mês */}
-                  <div className="rounded-2xl bg-zinc-900 p-6 ring-1 ring-zinc-800 shadow-xl flex flex-col justify-between">
+                  <div className="rounded-2xl bg-zinc-900 p-4 ring-1 ring-zinc-800 shadow-xl flex flex-col justify-between sm:p-6">
                     <div>
-                      <p className="text-[12px] font-semibold text-zinc-400 uppercase tracking-wider">Atividades no Mês</p>
-                      <p className="font-display text-[32px] font-bold text-zinc-100 mt-3">{totalAtividadesMes}</p>
+                      <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider sm:text-[12px]">Atividades no Mês</p>
+                      <p className="font-display text-[26px] font-bold text-zinc-100 mt-2 sm:text-[32px] sm:mt-3">{totalAtividadesMes}</p>
                       <p className="text-[12px] text-zinc-400 mt-1">Rondas executadas</p>
                     </div>
                     <button
                       onClick={() => setTab("historico")}
-                      className="text-left text-[12px] font-medium text-indigo-400 hover:underline cursor-pointer mt-4 bg-transparent border-none p-0"
+                      className="text-left text-[12px] font-medium text-indigo-400 hover:underline cursor-pointer mt-3 bg-transparent border-none p-0 sm:mt-4"
                     >
                       Ver detalhes ›
                     </button>
                   </div>
 
                   {/* Card Ocorrências do Mês */}
-                  <div className="rounded-2xl bg-zinc-900 p-6 ring-1 ring-zinc-800 shadow-xl flex flex-col justify-between">
+                  <div className="rounded-2xl bg-zinc-900 p-4 ring-1 ring-zinc-800 shadow-xl flex flex-col justify-between sm:p-6">
                     <div>
-                      <p className="text-[12px] font-semibold text-zinc-400 uppercase tracking-wider">Ocorrências do Mês</p>
-                      <p className="font-display text-[32px] font-bold text-red-400 mt-3">{totalOcorrenciasMes}</p>
+                      <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider sm:text-[12px]">Ocorrências do Mês</p>
+                      <p className="font-display text-[26px] font-bold text-red-400 mt-2 sm:text-[32px] sm:mt-3">{totalOcorrenciasMes}</p>
                       <p className="text-[12px] text-zinc-400 mt-1">Registradas em campo</p>
                     </div>
                     <button
                       onClick={() => setTab("ocorrencias")}
-                      className="text-left text-[12px] font-medium text-indigo-400 hover:underline cursor-pointer mt-4 bg-transparent border-none p-0"
+                      className="text-left text-[12px] font-medium text-indigo-400 hover:underline cursor-pointer mt-3 bg-transparent border-none p-0 sm:mt-4"
                     >
                       Ver central ›
                     </button>
@@ -578,8 +596,8 @@ function MainScreen({
                 </div>
 
                 {/* ---------------- BARRAS DE STATUS ---------------- */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="rounded-2xl bg-zinc-900 p-6 ring-1 ring-zinc-800 shadow-xl space-y-3">
+                <div className="grid grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2">
+                  <div className="rounded-2xl bg-zinc-900 p-4 ring-1 ring-zinc-800 shadow-xl space-y-3 sm:p-6">
                     <div className="flex justify-between items-center">
                       <p className="font-display text-[15px] font-bold text-zinc-100">Atividades de Hoje</p>
                       <span className="text-[11px] text-zinc-400 font-mono">{ultimasRondas.length} total</span>
@@ -594,7 +612,7 @@ function MainScreen({
                     </div>
                   </div>
 
-                  <div className="rounded-2xl bg-zinc-900 p-6 ring-1 ring-zinc-800 shadow-xl space-y-3">
+                  <div className="rounded-2xl bg-zinc-900 p-4 ring-1 ring-zinc-800 shadow-xl space-y-3 sm:p-6">
                     <div className="flex justify-between items-center">
                       <p className="font-display text-[15px] font-bold text-zinc-100">Casos de Ocorrência</p>
                       <span className="text-[11px] text-zinc-400 font-mono">{totalOcorrenciasMes} ativos</span>
@@ -611,9 +629,9 @@ function MainScreen({
                 </div>
 
                 {/* ---------------- LINHA DO TEMPO ---------------- */}
-                <div className="rounded-2xl bg-zinc-900 p-6 ring-1 ring-zinc-800 shadow-xl space-y-4">
-                  <div className="flex justify-between items-center border-b border-zinc-800 pb-3">
-                    <h3 className="font-display text-[16px] font-bold text-zinc-100">📅 Linha do Tempo — Atividades Recentes</h3>
+                <div className="rounded-2xl bg-zinc-900 p-4 ring-1 ring-zinc-800 shadow-xl space-y-4 sm:p-6">
+                  <div className="flex justify-between items-center gap-3 border-b border-zinc-800 pb-3">
+                    <h3 className="font-display text-[15px] font-bold text-zinc-100 sm:text-[16px]">📅 Linha do Tempo<span className="hidden sm:inline"> — Atividades Recentes</span></h3>
                     <button
                       onClick={() => setTab("historico")}
                       className="text-[12px] font-semibold text-indigo-400 hover:underline cursor-pointer bg-transparent border-none p-0"
@@ -627,19 +645,19 @@ function MainScreen({
                   ) : (
                     <div className="space-y-3 max-h-[380px] overflow-y-auto pr-2">
                       {ultimasRondas.slice(0, 10).map((r) => (
-                        <div key={r.id} className="flex items-center justify-between rounded-xl bg-zinc-950 p-4 ring-1 ring-zinc-800">
-                          <div className="flex items-center gap-3">
-                            <span className="font-mono text-[12px] font-bold text-amber-400 bg-zinc-900 px-2.5 py-1 rounded-md">
+                        <div key={r.id} className="flex flex-col gap-2 rounded-xl bg-zinc-950 p-3 ring-1 ring-zinc-800 sm:flex-row sm:items-center sm:justify-between sm:p-4">
+                          <div className="flex min-w-0 items-center gap-3">
+                            <span className="shrink-0 font-mono text-[12px] font-bold text-amber-400 bg-zinc-900 px-2.5 py-1 rounded-md">
                               {formatarHora(r.created_at)}
                             </span>
-                            <div>
-                              <p className="font-semibold text-[14px] text-zinc-100">
+                            <div className="min-w-0">
+                              <p className="truncate font-semibold text-[14px] text-zinc-100">
                                 {r.locais_ronda ? `${r.locais_ronda.predio} — ${r.locais_ronda.local}` : "Ronda de Posto"}
                               </p>
                               <p className="text-[12px] text-zinc-400">Responsável: <span className="text-zinc-200 font-medium">{r.seguranca}</span></p>
                             </div>
                           </div>
-                          <div>
+                          <div className="shrink-0 self-end sm:self-auto">
                             <span className={r.status === "OK" ? "rounded-lg bg-emerald-500/20 px-3 py-1 font-mono text-[11px] font-bold uppercase text-emerald-400 ring-1 ring-emerald-500/30" : "rounded-lg bg-red-500/20 px-3 py-1 font-mono text-[11px] font-bold uppercase text-red-400 ring-1 ring-red-500/30"}>
                               {r.status === "OK" ? "✓ Realizada" : "⚠️ Anomalia"}
                             </span>
@@ -664,25 +682,25 @@ function MainScreen({
 
   return (
     <Shell>
-      <div className="flex flex-wrap gap-1 bg-zinc-950 px-2 pt-3 pb-1 border-b border-zinc-800">
-        <TabButton active={tab === "registrar"} onClick={() => setTab("registrar")}>
+      <div className="grid grid-cols-4 gap-1 bg-zinc-950 px-2 pt-3 pb-2 border-b border-zinc-800">
+        <TabButton variant="grid" active={tab === "registrar"} onClick={() => setTab("registrar")}>
           Registrar
         </TabButton>
-        <TabButton active={tab === "checklist"} onClick={() => setTab("checklist")}>
+        <TabButton variant="grid" active={tab === "checklist"} onClick={() => setTab("checklist")}>
           Checklist
         </TabButton>
-        <TabButton active={tab === "historico"} onClick={() => setTab("historico")}>
+        <TabButton variant="grid" active={tab === "historico"} onClick={() => setTab("historico")}>
           Histórico
         </TabButton>
-        <TabButton active={tab === "ocorrencias"} onClick={() => setTab("ocorrencias")}>
+        <TabButton variant="grid" active={tab === "ocorrencias"} onClick={() => setTab("ocorrencias")}>
           Livro Ata
         </TabButton>
         {admin && (
           <>
-            <TabButton active={tab === "financeiro"} onClick={() => setTab("financeiro")}>
+            <TabButton variant="grid" active={tab === "financeiro"} onClick={() => setTab("financeiro")}>
               💰 PJ
             </TabButton>
-            <TabButton active={tab === "admin"} onClick={() => setTab("admin")}>
+            <TabButton variant="grid" active={tab === "admin"} onClick={() => setTab("admin")}>
               ⚙️ Admin
             </TabButton>
           </>
@@ -769,23 +787,33 @@ function MainScreen({
   );
 }
 
+const TAB_LAYOUT = {
+  // Coluna de largura igual (grelha do vigilante): texto nunca quebra de linha.
+  grid: "w-full min-w-0 whitespace-nowrap px-1 py-2.5 text-[12.5px] tracking-tight",
+  // Faixa deslizante na horizontal (painel admin em telemóvel).
+  scroll: "shrink-0 snap-start whitespace-nowrap px-4 py-2 text-[13px] sm:px-5 sm:py-2.5",
+} as const;
+
 function TabButton({
   active,
   onClick,
   children,
+  variant = "scroll",
 }: {
   active: boolean;
   onClick: () => void;
   children: React.ReactNode;
+  variant?: keyof typeof TAB_LAYOUT;
 }) {
   return (
     <button
       onClick={onClick}
-      className={
+      aria-current={active ? "page" : undefined}
+      className={`rounded-[12px] ${TAB_LAYOUT[variant]} ${
         active
-          ? "rounded-[12px] bg-zinc-900 py-2.5 px-5 text-[13px] font-bold text-amber-400 ring-1 ring-amber-500/50 shadow-md"
-          : "rounded-[12px] bg-zinc-950 py-2.5 px-5 text-[13px] font-semibold text-zinc-400 hover:text-zinc-200"
-      }
+          ? "bg-zinc-900 font-bold text-amber-400 ring-1 ring-amber-500/50 shadow-md"
+          : "bg-zinc-950 font-semibold text-zinc-400 hover:text-zinc-200"
+      }`}
     >
       {children}
     </button>
@@ -837,6 +865,13 @@ async function obterLocalizacaoAtual(): Promise<{ latitude: number | null; longi
 
 /* ---------------- Registrar com Validação por Posto Isolado e Turno ---------------- */
 
+const MAX_FOTOS_ANOMALIA = 8;
+
+interface FotoAnexada {
+  file: File;
+  preview: string;
+}
+
 function RegistrarTab({ seguranca, postoAtribuido, isCobertura, admin }: { seguranca: string; postoAtribuido: string; isCobertura: boolean; admin: boolean }) {
   const [codigo, setCodigo] = useState("");
   const [buscando, setBuscando] = useState(false);
@@ -852,8 +887,48 @@ function RegistrarTab({ seguranca, postoAtribuido, isCobertura, admin }: { segur
   const [obsManual, setObsManual] = useState("");
   const [erroObsManual, setErroObsManual] = useState("");
   
-  const [fotoFile, setFotoFile] = useState<File | null>(null);
-  const [fotoPreview, setFotoPreview] = useState<string | null>(null);
+  const [fotos, setFotos] = useState<FotoAnexada[]>([]);
+  const [guardarGaleria, setGuardarGaleria] = useState(lerPreferenciaGaleria);
+  const [avisoGaleria, setAvisoGaleria] = useState("");
+
+  const fotosRef = useRef(fotos);
+  fotosRef.current = fotos;
+  useEffect(() => () => fotosRef.current.forEach((f) => URL.revokeObjectURL(f.preview)), []);
+
+  function limparFotos() {
+    fotos.forEach((f) => URL.revokeObjectURL(f.preview));
+    setFotos([]);
+    setAvisoGaleria("");
+  }
+
+  async function adicionarFotos(lista: FileList | null, daCamera: boolean) {
+    const novas = Array.from(lista ?? []).filter((f) => f.type.startsWith("image/") || f.type === "");
+    if (novas.length === 0) return;
+    const espaco = MAX_FOTOS_ANOMALIA - fotos.length;
+    const aceites = novas.slice(0, Math.max(espaco, 0));
+    if (aceites.length < novas.length) {
+      setAvisoGaleria(`Limite de ${MAX_FOTOS_ANOMALIA} fotos por anomalia atingido.`);
+    }
+    setFotos((prev) => [...prev, ...aceites.map((file) => ({ file, preview: URL.createObjectURL(file) }))]);
+
+    // Fotos tiradas pela câmara do browser não ficam no telemóvel — guarda uma cópia local.
+    // No iOS a gravação exige um toque explícito (botão "Guardar na Galeria").
+    if (daCamera && guardarGaleria && aceites.length > 0 && !ehIos()) {
+      await guardarCopiaLocal(aceites);
+    }
+  }
+
+  async function guardarCopiaLocal(files: File[]) {
+    const resultado = await guardarNaGaleria(files);
+    if (resultado === "descarregado") setAvisoGaleria("📥 Cópia guardada no telemóvel (Transferências / Galeria).");
+    else if (resultado === "partilhado") setAvisoGaleria("✅ Cópia guardada na Galeria / Fotos.");
+  }
+
+  function removerFoto(indice: number) {
+    const alvo = fotos[indice];
+    if (alvo) URL.revokeObjectURL(alvo.preview);
+    setFotos((prev) => prev.filter((_, i) => i !== indice));
+  }
 
   async function consultar(valor: string, manual = false) {
     const codigoLimpo = normalizarCodigoQr(valor);
@@ -896,8 +971,7 @@ function RegistrarTab({ seguranca, postoAtribuido, isCobertura, admin }: { segur
       setModoAnomalia(false);
       setGravidade("MODERADA");
       setDescricao("");
-      setFotoFile(null);
-      setFotoPreview(null);
+      limparFotos();
     } catch {
       setErroBusca("Falha ao consultar o local. Verifique a conexão e tente de novo.");
     } finally {
@@ -974,7 +1048,7 @@ function RegistrarTab({ seguranca, postoAtribuido, isCobertura, admin }: { segur
         descricao: descricao.trim(),
         latitude: gps.latitude,
         longitude: gps.longitude,
-        fotoFile: fotoFile,
+        fotoFiles: fotos.map((f) => f.file),
         isCobertura,
         postoCobertura: postoAtribuido,
       });
@@ -984,8 +1058,7 @@ function RegistrarTab({ seguranca, postoAtribuido, isCobertura, admin }: { segur
       setModoAnomalia(false);
       setGravidade("MODERADA");
       setDescricao("");
-      setFotoFile(null);
-      setFotoPreview(null);
+      limparFotos();
     } catch (err: any) {
       setErroBusca(err?.message || "Não foi possível enviar o registro com foto. Tente novamente.");
     } finally {
@@ -1160,47 +1233,93 @@ function RegistrarTab({ seguranca, postoAtribuido, isCobertura, admin }: { segur
                 <p className="text-[13px] font-medium text-red-400">{erroDescricao}</p>
               )}
 
-              <div className="pt-1">
-                <label className="block text-[12px] font-semibold uppercase tracking-[0.14em] text-zinc-400 mb-1.5">
-                  📷 Registo Fotográfico (Opcional)
+              <div className="pt-1 space-y-2">
+                <label className="flex items-center text-[12px] font-semibold uppercase tracking-[0.14em] text-zinc-400">
+                  📷 Registo Fotográfico
+                  <span className="ml-auto font-mono font-medium normal-case tracking-normal text-zinc-500">
+                    {fotos.length}/{MAX_FOTOS_ANOMALIA}
+                  </span>
                 </label>
-                
-                {fotoPreview ? (
-                  <div className="relative inline-block">
-                    <img 
-                      src={fotoPreview} 
-                      alt="Preview" 
-                      className="h-24 w-24 rounded-[12px] object-cover ring-2 ring-zinc-700"
+
+                {fotos.length > 0 && (
+                  <div className="grid grid-cols-4 gap-2">
+                    {fotos.map((f, i) => (
+                      <div key={f.preview} className="relative aspect-square">
+                        <img
+                          src={f.preview}
+                          alt={`Foto ${i + 1}`}
+                          className="size-full rounded-[10px] object-cover ring-2 ring-zinc-700"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removerFoto(i)}
+                          aria-label={`Remover foto ${i + 1}`}
+                          className="absolute -top-1.5 -right-1.5 grid size-6 place-items-center rounded-full bg-red-600 text-white font-bold text-xs shadow-md"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {fotos.length < MAX_FOTOS_ANOMALIA && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="flex cursor-pointer items-center justify-center gap-2 rounded-[12px] border-2 border-dashed border-zinc-700 bg-zinc-900 py-3 px-2 text-[13px] font-semibold text-zinc-300 hover:bg-zinc-800 active:translate-y-0.5">
+                      <Camera className="size-4" />
+                      {fotos.length === 0 ? "Tirar foto" : "Mais uma"}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        className="hidden"
+                        onChange={(e) => {
+                          void adicionarFotos(e.target.files, true);
+                          e.target.value = "";
+                        }}
+                      />
+                    </label>
+                    <label className="flex cursor-pointer items-center justify-center gap-2 rounded-[12px] border-2 border-dashed border-zinc-700 bg-zinc-900 py-3 px-2 text-[13px] font-semibold text-zinc-300 hover:bg-zinc-800 active:translate-y-0.5">
+                      <Images className="size-4" />
+                      Da galeria
+                      <input
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        className="hidden"
+                        onChange={(e) => {
+                          void adicionarFotos(e.target.files, false);
+                          e.target.value = "";
+                        }}
+                      />
+                    </label>
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2">
+                  <label className="flex flex-1 cursor-pointer items-center gap-2 text-[12px] text-zinc-400">
+                    <input
+                      type="checkbox"
+                      checked={guardarGaleria}
+                      onChange={(e) => {
+                        setGuardarGaleria(e.target.checked);
+                        gravarPreferenciaGaleria(e.target.checked);
+                      }}
+                      className="size-4 accent-amber-500"
                     />
+                    Guardar cópia no telemóvel
+                  </label>
+                  {fotos.length > 0 && (ehIos() || !guardarGaleria) && (
                     <button
                       type="button"
-                      onClick={() => {
-                        setFotoFile(null);
-                        setFotoPreview(null);
-                      }}
-                      className="absolute -top-2 -right-2 grid size-6 place-items-center rounded-full bg-red-600 text-white font-bold text-xs shadow-md"
+                      onClick={() => void guardarCopiaLocal(fotos.map((f) => f.file))}
+                      className="flex shrink-0 items-center gap-1.5 rounded-[10px] bg-zinc-800 px-3 py-1.5 text-[12px] font-semibold text-zinc-200 ring-1 ring-zinc-700"
                     >
-                      ✕
+                      <Download className="size-3.5" /> Guardar na Galeria
                     </button>
-                  </div>
-                ) : (
-                  <label className="flex cursor-pointer items-center justify-center gap-2 rounded-[12px] border-2 border-dashed border-zinc-700 bg-zinc-900 py-3 px-4 text-[13px] font-semibold text-zinc-300 hover:bg-zinc-800 active:translate-y-0.5">
-                    <span>📷 Tirar Foto / Anexar Imagem</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      capture="environment"
-                      className="hidden"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          setFotoFile(file);
-                          setFotoPreview(URL.createObjectURL(file));
-                        }
-                      }}
-                    />
-                  </label>
-                )}
+                  )}
+                </div>
+                {avisoGaleria && <p className="text-[12px] font-medium text-emerald-400">{avisoGaleria}</p>}
               </div>
 
               <button
@@ -1209,7 +1328,11 @@ function RegistrarTab({ seguranca, postoAtribuido, isCobertura, admin }: { segur
                 className="mt-3 flex w-full items-center justify-center gap-2 rounded-[14px] bg-zinc-800 py-3.5 font-display text-[15px] font-semibold text-zinc-100 shadow-md disabled:opacity-60 active:translate-y-0.5"
               >
                 <span className="grid size-5 place-items-center rounded-full bg-red-600 text-[11px] font-bold text-white">!</span>
-                {enviando ? "A enviar foto e GPS..." : "Enviar registo de anomalia"}
+                {enviando
+                  ? fotos.length > 0
+                    ? `A enviar ${fotos.length} foto${fotos.length > 1 ? "s" : ""} e GPS...`
+                    : "A enviar com GPS..."
+                  : "Enviar registo de anomalia"}
               </button>
             </div>
           )}
@@ -1536,139 +1659,6 @@ function ChecklistTab({ seguranca, postoAtribuido, admin }: { seguranca: string;
   );
 }
 
-/* ---------------- QR Scanner Nativo ---------------- */
-
-declare global {
-  interface Window {
-    BarcodeDetector?: new (options?: { formats?: string[] }) => {
-      detect: (source: CanvasImageSource) => Promise<Array<{ rawValue: string }>>;
-    };
-  }
-}
-
-function QrScanner({
-  onDetect,
-  disabled,
-}: {
-  onDetect: (codigo: string) => void;
-  disabled: boolean;
-}) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const [cameraAtiva, setCameraAtiva] = useState(false);
-  const [erroCamera, setErroCamera] = useState("");
-  const ultimoLido = useRef<{ valor: string; em: number }>({ valor: "", em: 0 });
-
-  useEffect(() => {
-    if (!cameraAtiva) return;
-    let cancelado = false;
-    let intervalo: ReturnType<typeof setInterval> | undefined;
-
-    async function iniciar() {
-      if (!("BarcodeDetector" in window) || !window.BarcodeDetector) {
-        setErroCamera("Este navegador não tem leitor de QR nativo. Use o código manual abaixo.");
-        setCameraAtiva(false);
-        return;
-      }
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment" },
-        });
-        if (cancelado) {
-          stream.getTracks().forEach((t) => t.stop());
-          return;
-        }
-        streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
-        }
-        const detector = new window.BarcodeDetector({ formats: ["qr_code"] });
-        intervalo = setInterval(async () => {
-          if (!videoRef.current || disabled) return;
-          try {
-            const codigos = await detector.detect(videoRef.current);
-            const valor = codigos[0]?.rawValue?.trim();
-            if (!valor) return;
-            const agora = Date.now();
-            if (valor === ultimoLido.current.valor && agora - ultimoLido.current.em < 4000) return;
-            ultimoLido.current = { valor, em: agora };
-            
-            setCameraAtiva(false);
-            onDetect(valor);
-          } catch {
-            /* frame sem QR */
-          }
-        }, 500);
-      } catch {
-        if (!cancelado) {
-          setErroCamera("Não foi possível acessar a câmera. Use o código manual abaixo.");
-          setCameraAtiva(false);
-        }
-      }
-    }
-
-    iniciar();
-    return () => {
-      cancelado = true;
-      if (intervalo) clearInterval(intervalo);
-      streamRef.current?.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
-    };
-  }, [cameraAtiva]);
-
-  return (
-    <div className="rounded-[20px] bg-zinc-950 p-3 ring-1 ring-zinc-800">
-      <div className="flex items-center justify-between px-1 pb-2.5">
-        <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
-          Leitor de QR
-        </span>
-        <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-600">
-          {cameraAtiva ? "câmera ativa" : "câmera parada"}
-        </span>
-      </div>
-      <div className="relative aspect-[4/3] overflow-hidden rounded-[14px] bg-black">
-        {cameraAtiva ? (
-          <>
-            <video ref={videoRef} playsInline muted className="size-full object-cover" />
-            <span className="absolute left-4 top-4 size-7 border-l-[3px] border-t-[3px] border-amber-500"></span>
-            <span className="absolute right-4 top-4 size-7 border-r-[3px] border-t-[3px] border-amber-500"></span>
-            <span className="absolute bottom-4 left-4 size-7 border-b-[3px] border-l-[3px] border-amber-500"></span>
-            <span className="absolute bottom-4 right-4 size-7 border-b-[3px] border-r-[3px] border-amber-500"></span>
-            <span className="absolute bottom-3 left-1/2 -translate-x-1/2 whitespace-nowrap font-mono text-[10px] uppercase tracking-[0.2em] text-amber-400">
-              Enquadre o código
-            </span>
-          </>
-        ) : (
-          <div className="grid size-full place-items-center p-6 text-center">
-            <div>
-              <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-zinc-500">
-                {erroCamera || "Câmera desligada"}
-              </p>
-              {!erroCamera && (
-                <button
-                  onClick={() => setCameraAtiva(true)}
-                  className="mt-4 rounded-[12px] bg-gradient-to-r from-amber-500 to-amber-600 px-6 py-3 font-display text-[14px] font-bold text-zinc-950 shadow-md active:translate-y-0.5"
-                >
-                  Ativar câmera
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-      {cameraAtiva && (
-        <button
-          onClick={() => setCameraAtiva(false)}
-          className="mt-2.5 w-full rounded-[12px] bg-zinc-900 py-2.5 text-[12px] font-semibold uppercase tracking-[0.14em] text-zinc-400 ring-1 ring-zinc-800"
-        >
-          Desligar câmera
-        </button>
-      )}
-    </div>
-  );
-}
-
 /* ---------------- Histórico Inteligente com Filtro por Empresa/Posto, Segurança e Datas ---------------- */
 
 function HistoricoTab({ admin, segurancaAtual }: { admin: boolean; segurancaAtual: string }) {
@@ -1711,20 +1701,22 @@ function HistoricoTab({ admin, segurancaAtual }: { admin: boolean; segurancaAtua
     carregar();
   }, [dataInicial, dataFinal]);
 
-  async function handleExcluir(id: string) {
-    if (!admin) {
-      window.alert("Apenas administradores podem excluir registos.");
+  async function handleExcluir(registro: RegistroRonda) {
+    if (!podeExcluirRegistro(registro, segurancaAtual, admin)) {
+      window.alert("Marcações de início ou fim de plantão não podem ser apagadas.");
       return;
     }
-    if (!window.confirm("Excluir este registo do histórico? Esta ação não pode ser desfeita.")) return;
-    setExcluindoId(id);
+    const mensagem = admin
+      ? "Excluir este registo do histórico? Esta ação não pode ser desfeita."
+      : "Anular este registo?\n\nO ponto volta a ficar pendente no Checklist e pode refazer a marcação (ex.: reportar uma anomalia detetada logo após o check).";
+    if (!window.confirm(mensagem)) return;
+    setExcluindoId(registro.id);
     try {
-      const { error } = await supabase.from("registros_rondas").delete().eq("id", id);
-      if (error) throw error;
-      setRegistros((prev) => prev.filter((r) => r.id !== id));
-    } catch (err) {
+      await excluirRegistro(registro, segurancaAtual, admin);
+      setRegistros((prev) => prev.filter((r) => r.id !== registro.id));
+    } catch (err: any) {
       console.error("Erro ao excluir:", err);
-      window.alert("Não foi possível excluir o registo.");
+      window.alert(err?.message || "Não foi possível excluir o registo.");
     } finally {
       setExcluindoId(null);
     }
@@ -1967,18 +1959,7 @@ function HistoricoTab({ admin, segurancaAtual }: { admin: boolean; segurancaAtua
                 </p>
               )}
 
-              {r.foto_url && (
-                <div className="mt-2.5">
-                  <a href={r.foto_url} target="_blank" rel="noreferrer">
-                    <img 
-                      src={r.foto_url} 
-                      alt="Foto da anomalia" 
-                      className="h-32 w-full rounded-[10px] object-cover ring-1 ring-zinc-700 hover:opacity-95 transition-opacity"
-                    />
-                  </a>
-                  <span className="text-[10px] text-zinc-500">Clique na foto para ampliar</span>
-                </div>
-              )}
+              <FotosRegistro fotoUrl={r.foto_url} />
 
               {r.latitude && r.longitude && (
                 <div className="mt-2 flex items-center justify-between border-t border-zinc-800 pt-1.5 text-[11px] text-zinc-400">
@@ -1993,14 +1974,19 @@ function HistoricoTab({ admin, segurancaAtual }: { admin: boolean; segurancaAtua
                   </a>
                 </div>
               )}
-              {admin && (
+              {podeExcluirRegistro(r, segurancaAtual, admin) ? (
                 <button
-                  onClick={() => handleExcluir(r.id)}
+                  onClick={() => handleExcluir(r)}
                   disabled={excluindoId === r.id}
-                  className="mt-2 rounded-[8px] bg-red-950 px-2.5 py-1 text-[11px] font-semibold text-red-400 ring-1 ring-red-500/30 disabled:opacity-50"
+                  className="mt-2 flex items-center gap-1.5 rounded-[8px] bg-red-950 px-2.5 py-1 text-[11px] font-semibold text-red-400 ring-1 ring-red-500/30 disabled:opacity-50"
                 >
-                  {excluindoId === r.id ? "A excluir..." : "Excluir registo"}
+                  <Trash2 className="size-3.5" />
+                  {excluindoId === r.id ? "A excluir..." : admin ? "Excluir registo" : "Anular / refazer"}
                 </button>
+              ) : (
+                ehMarcacaoPlantao(r.descricao) && (
+                  <p className="mt-2 text-[10px] uppercase tracking-wider text-zinc-600">🔒 Marcação de plantão protegida</p>
+                )
               )}
             </div>
           );
@@ -2014,6 +2000,41 @@ function HistoricoTab({ admin, segurancaAtual }: { admin: boolean; segurancaAtua
       >
         Atualizar
       </button>
+    </div>
+  );
+}
+
+function FotosRegistro({ fotoUrl }: { fotoUrl: string | null }) {
+  const fotos = extrairFotos(fotoUrl);
+  if (fotos.length === 0) return null;
+  return (
+    <div className="mt-2.5">
+      {fotos.length === 1 ? (
+        <a href={fotos[0]} target="_blank" rel="noreferrer">
+          <img
+            src={fotos[0]}
+            alt="Foto da anomalia"
+            loading="lazy"
+            className="h-32 w-full rounded-[10px] object-cover ring-1 ring-zinc-700 hover:opacity-95 transition-opacity"
+          />
+        </a>
+      ) : (
+        <div className="grid grid-cols-3 gap-1.5">
+          {fotos.map((url, i) => (
+            <a key={url} href={url} target="_blank" rel="noreferrer" className="aspect-square">
+              <img
+                src={url}
+                alt={`Foto ${i + 1} da anomalia`}
+                loading="lazy"
+                className="size-full rounded-[8px] object-cover ring-1 ring-zinc-700 hover:opacity-95 transition-opacity"
+              />
+            </a>
+          ))}
+        </div>
+      )}
+      <span className="text-[10px] text-zinc-500">
+        {fotos.length > 1 ? `${fotos.length} fotos · toque para ampliar` : "Clique na foto para ampliar"}
+      </span>
     </div>
   );
 }
@@ -2039,6 +2060,7 @@ function OcorrenciasTab({ seguranca, admin }: { seguranca: string; admin: boolea
   const [dataFinal, setDataFinal] = useState("");
   const [filtroSeguranca, setFiltroSeguranca] = useState("TODOS");
   const [listaSegurancas, setListaSegurancas] = useState<string[]>([]);
+  const [busca, setBusca] = useState("");
 
   async function carregarOcorrencias() {
     setCarregando(true);
@@ -2123,12 +2145,21 @@ function OcorrenciasTab({ seguranca, admin }: { seguranca: string; admin: boolea
     setDataInicial("");
     setDataFinal("");
     setFiltroSeguranca("TODOS");
+    setBusca("");
   }
+
+  const termo = normalizarBusca(busca);
+  const listaFiltrada = termo
+    ? lista.filter((item) => normalizarBusca(`${item.seguranca} ${item.descricao}`).includes(termo))
+    : lista;
+  const temFiltros = !!(dataInicial || dataFinal || busca || filtroSeguranca !== "TODOS");
+  const restantes = LIMITE_LIVRO_ATA - texto.length;
+  const hojeStr = new Date().toDateString();
 
   return (
     <div>
       <div className="rounded-[18px] bg-zinc-950 p-4 ring-1 ring-zinc-800 shadow-md mb-4">
-        <label className="block text-[12px] font-semibold uppercase tracking-[0.14em] text-zinc-300">
+        <label htmlFor="livro-ata-texto" className="block text-[12px] font-semibold uppercase tracking-[0.14em] text-zinc-300">
           📖 Novo Registo no Livro Ata
         </label>
         <p className="mt-1 text-[12px] text-zinc-500">
@@ -2136,24 +2167,36 @@ function OcorrenciasTab({ seguranca, admin }: { seguranca: string; admin: boolea
         </p>
 
         <textarea
-          rows={3}
+          id="livro-ata-texto"
+          rows={4}
           value={texto}
           onChange={(e) => {
             setTexto(e.target.value);
             setErro("");
             setSucesso(false);
           }}
-          maxLength={1000}
+          maxLength={LIMITE_LIVRO_ATA}
           placeholder="Ex.: Manutenção na central de alarme, apoio ao colaborador..."
           className="mt-2.5 w-full resize-none rounded-[12px] bg-zinc-900 p-3 text-[15px] text-zinc-100 placeholder:text-zinc-600 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500"
         />
+        <div className="mt-1 flex items-center justify-between text-[11px]">
+          <span className={texto.trim().length > 0 && texto.trim().length < 5 ? "text-amber-400" : "text-zinc-600"}>
+            Mínimo 5 caracteres
+          </span>
+          <span
+            aria-live="polite"
+            className={`font-mono ${restantes <= 50 ? "font-bold text-red-400" : restantes <= 150 ? "text-amber-400" : "text-zinc-500"}`}
+          >
+            {texto.length}/{LIMITE_LIVRO_ATA}
+          </span>
+        </div>
 
         {erro && <p className="mt-1.5 text-[13px] font-medium text-red-400">{erro}</p>}
         {sucesso && <p className="mt-1.5 text-[13px] font-semibold text-emerald-400">Registrado com sucesso no Livro Ata!</p>}
 
         <button
           onClick={enviarOcorrencia}
-          disabled={enviando}
+          disabled={enviando || texto.trim().length < 5}
           className="mt-3 w-full rounded-[14px] bg-gradient-to-r from-amber-500 to-amber-600 py-3 font-display text-[15px] font-bold text-zinc-950 shadow-md disabled:opacity-50 active:translate-y-0.5"
         >
           {enviando ? "A salvar..." : "Assinar e Salvar no Livro Ata"}
@@ -2161,12 +2204,28 @@ function OcorrenciasTab({ seguranca, admin }: { seguranca: string; admin: boolea
       </div>
 
       <div className="mb-3 rounded-[14px] bg-zinc-950 p-3 ring-1 ring-zinc-800 space-y-2.5">
-        <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
-          🔍 Filtrar Livro Ata (Período e Segurança)
-        </span>
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">🔍 Filtrar Livro Ata</span>
+          {temFiltros && (
+            <button onClick={limparFiltros} className="text-[12px] font-semibold text-amber-400 underline underline-offset-2">
+              Limpar filtros
+            </button>
+          )}
+        </div>
+
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-zinc-500" />
+          <input
+            type="search"
+            value={busca}
+            onChange={(e) => setBusca(e.target.value)}
+            placeholder="Pesquisar no texto ou nome..."
+            className="w-full rounded-[10px] bg-zinc-900 py-2 pl-8 pr-2.5 text-[13px] text-zinc-100 placeholder:text-zinc-600 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500"
+          />
+        </div>
 
         <label className="flex flex-col gap-1 text-[11px] text-zinc-400 font-medium">
-          Filtrar por segurança
+          Segurança
           <select
             value={filtroSeguranca}
             onChange={(e) => setFiltroSeguranca(e.target.value)}
@@ -2181,40 +2240,33 @@ function OcorrenciasTab({ seguranca, admin }: { seguranca: string; admin: boolea
           </select>
         </label>
 
-        <div className="flex flex-wrap items-end gap-2">
-          <label className="flex flex-1 flex-col gap-1 text-[11px] text-zinc-400 font-medium">
+        <div className="grid grid-cols-2 gap-2">
+          <label className="flex min-w-0 flex-col gap-1 text-[11px] text-zinc-400 font-medium">
             Data inicial
             <input
               type="date"
               value={dataInicial}
               max={dataFinal || undefined}
               onChange={(e) => setDataInicial(e.target.value)}
-              className="rounded-[10px] bg-zinc-900 px-2.5 py-2 text-[13px] text-zinc-100 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500 font-normal"
+              className="w-full min-w-0 rounded-[10px] bg-zinc-900 px-2.5 py-2 text-[13px] text-zinc-100 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500 font-normal"
             />
           </label>
-          <label className="flex flex-1 flex-col gap-1 text-[11px] text-zinc-400 font-medium">
+          <label className="flex min-w-0 flex-col gap-1 text-[11px] text-zinc-400 font-medium">
             Data final
             <input
               type="date"
               value={dataFinal}
               min={dataInicial || undefined}
               onChange={(e) => setDataFinal(e.target.value)}
-              className="rounded-[10px] bg-zinc-900 px-2.5 py-2 text-[13px] text-zinc-100 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500 font-normal"
+              className="w-full min-w-0 rounded-[10px] bg-zinc-900 px-2.5 py-2 text-[13px] text-zinc-100 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500 font-normal"
             />
           </label>
-          <button
-            onClick={limparFiltros}
-            disabled={!dataInicial && !dataFinal && filtroSeguranca === "TODOS"}
-            className="rounded-[10px] bg-zinc-800 px-3 py-2 text-[12px] font-semibold text-zinc-200 disabled:opacity-40"
-          >
-            Limpar
-          </button>
         </div>
       </div>
 
       <button
-        onClick={() => gerarRelatorioLivroAta(lista)}
-        disabled={carregando || lista.length === 0}
+        onClick={() => gerarRelatorioLivroAta(listaFiltrada)}
+        disabled={carregando || listaFiltrada.length === 0}
         className="mb-4 w-full rounded-[12px] bg-zinc-800 py-3 font-display text-[13px] font-semibold tracking-wide text-zinc-100 shadow-md disabled:opacity-50 active:translate-y-0.5"
       >
         🖨️ Imprimir / Gerar Relatório do Livro Ata
@@ -2222,42 +2274,70 @@ function OcorrenciasTab({ seguranca, admin }: { seguranca: string; admin: boolea
 
       <div className="mb-2.5 flex items-center justify-between px-1">
         <p className="font-display text-[15px] font-semibold text-zinc-200">
-          Registros no Livro Ata ({lista.length})
+          Registros no Livro Ata ({listaFiltrada.length}
+          {listaFiltrada.length !== lista.length ? ` de ${lista.length}` : ""})
         </p>
       </div>
 
       {carregando ? (
         <p className="text-center text-[13px] text-zinc-500 py-4">A carregar registros do Livro Ata...</p>
-      ) : lista.length === 0 ? (
+      ) : listaFiltrada.length === 0 ? (
         <p className="rounded-[14px] bg-zinc-950 p-5 text-center text-[14px] text-zinc-500 ring-1 ring-zinc-800">
           Nenhum registo encontrado com os filtros selecionados.
         </p>
       ) : (
         <div className="space-y-2.5">
-          {lista.map((item) => (
-            <div
-              key={item.id}
-              className="rounded-[14px] bg-zinc-950 p-3.5 ring-1 ring-zinc-800 shadow-md"
-            >
-              <div className="flex items-center justify-between border-b border-zinc-800 pb-2 mb-2">
-                <span className="text-[12px] font-bold text-amber-400">{item.seguranca}</span>
-                <span className="font-mono text-[11px] text-zinc-500">{formatarDataHora(item.created_at)}</span>
-              </div>
-              <p className="text-[14px] text-zinc-300 leading-relaxed whitespace-pre-line">{item.descricao}</p>
-              {admin && (
-                <button
-                  onClick={() => excluirOcorrencia(item.id)}
-                  className="mt-2.5 rounded-[8px] bg-red-950 px-2.5 py-1 text-[11px] font-semibold text-red-400 ring-1 ring-red-500/30"
-                >
-                  Excluir registo
-                </button>
-              )}
-            </div>
-          ))}
+          {listaFiltrada.map((item) => {
+            const ehHoje = new Date(item.created_at).toDateString() === hojeStr;
+            const ehMeu = item.seguranca === seguranca;
+            return (
+              <article
+                key={item.id}
+                className={`rounded-[14px] bg-zinc-950 p-3.5 shadow-md ring-1 ${ehMeu ? "ring-amber-500/30" : "ring-zinc-800"}`}
+              >
+                <header className="mb-2 flex items-center gap-2.5 border-b border-zinc-800 pb-2">
+                  <span className="grid size-8 shrink-0 place-items-center rounded-full bg-amber-500/15 text-[13px] font-bold text-amber-400 ring-1 ring-amber-500/30">
+                    {item.seguranca.charAt(0).toUpperCase()}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[13px] font-bold text-zinc-100">
+                      {item.seguranca}
+                      {ehMeu && <span className="ml-1.5 text-[10px] font-semibold uppercase text-amber-400">(você)</span>}
+                    </p>
+                    <p className="font-mono text-[11px] text-zinc-500">{formatarDataHora(item.created_at)}</p>
+                  </div>
+                  {ehHoje && (
+                    <span className="shrink-0 rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-400">
+                      Hoje
+                    </span>
+                  )}
+                </header>
+                <p className="break-words text-[14px] leading-relaxed text-zinc-300 whitespace-pre-line">{item.descricao}</p>
+                {admin && (
+                  <button
+                    onClick={() => excluirOcorrencia(item.id)}
+                    className="mt-2.5 flex items-center gap-1.5 rounded-[8px] bg-red-950 px-2.5 py-1 text-[11px] font-semibold text-red-400 ring-1 ring-red-500/30"
+                  >
+                    <Trash2 className="size-3.5" /> Excluir registo
+                  </button>
+                )}
+              </article>
+            );
+          })}
         </div>
       )}
     </div>
   );
+}
+
+const LIMITE_LIVRO_ATA = 1000;
+
+function normalizarBusca(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .trim();
 }
 
 /* ---------------- Relatório do Livro Ata ---------------- */
@@ -2370,8 +2450,11 @@ function gerarRelatorio(registros: RegistroRonda[], posto: string) {
         ? `<br><a href="https://maps.google.com/?q=${r.latitude},${r.longitude}" target="_blank" style="color:#0f52ba;font-size:11px;font-weight:600">📍 Ver no Google Maps</a>` 
         : "";
 
-      const fotoInfo = r.foto_url
-        ? `<br><div style="margin-top:6px;"><a href="${r.foto_url}" target="_blank"><img src="${r.foto_url}" alt="Foto" style="max-width:120px;max-height:120px;border-radius:6px;border:1px solid #d9d2c6;" /></a></div>`
+      const fotos = extrairFotos(r.foto_url);
+      const fotoInfo = fotos.length > 0
+        ? `<br><div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px;">${fotos
+            .map((url) => `<a href="${escapeHtml(url)}" target="_blank"><img src="${escapeHtml(url)}" alt="Foto" style="max-width:120px;max-height:120px;border-radius:6px;border:1px solid #d9d2c6;" /></a>`)
+            .join("")}</div>`
         : "";
 
       return `<tr>
@@ -2536,7 +2619,10 @@ function AdminTab() {
   const [predio, setPredio] = useState("");
   const [localNome, setLocalNome] = useState("");
   const [qrHash, setQrHash] = useState("");
+  // Enquanto o código não for editado à mão, é gerado a partir do nome do prédio (ex.: samambaia-02).
+  const [qrManual, setQrManual] = useState(false);
   const [salvandoLocal, setSalvandoLocal] = useState(false);
+  const formLocalRef = useRef<HTMLDivElement>(null);
 
   // Estados de Cadastro / Edição de Segurança
   const [editandoSegId, setEditandoSegId] = useState<string | null>(null);
@@ -2548,6 +2634,11 @@ function AdminTab() {
   const [salvandoSeg, setSalvandoSeg] = useState(false);
 
   const listaPostosDisponiveis = Array.from(new Set(locais.map((l) => l.predio).filter(Boolean))).sort();
+  const qrAutomatico = useMemo(
+    () => gerarProximoCodigo(predio, locais.map((l) => l.qr_code_hash)),
+    [predio, locais],
+  );
+  const qrEfetivo = (editandoLocalId || qrManual ? qrHash : qrAutomatico).trim();
 
   async function carregarDadosAdmin() {
     setCarregando(true);
@@ -2574,7 +2665,8 @@ function AdminTab() {
     setPredio(loc.predio);
     setLocalNome(loc.local);
     setQrHash(loc.qr_code_hash);
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    setQrManual(true);
+    formLocalRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   function cancelarEdicaoLocal() {
@@ -2582,11 +2674,12 @@ function AdminTab() {
     setPredio("");
     setLocalNome("");
     setQrHash("");
+    setQrManual(false);
   }
 
   async function salvarLocal(e: React.FormEvent) {
     e.preventDefault();
-    if (!predio.trim() || !localNome.trim() || !qrHash.trim()) {
+    if (!predio.trim() || !localNome.trim() || !qrEfetivo) {
       window.alert("Preencha todos os campos do local de ronda.");
       return;
     }
@@ -2598,7 +2691,7 @@ function AdminTab() {
           .update({
             predio: predio.trim(),
             local: localNome.trim(),
-            qr_code_hash: qrHash.trim(),
+            qr_code_hash: qrEfetivo,
           })
           .eq("id", editandoLocalId);
 
@@ -2609,7 +2702,7 @@ function AdminTab() {
           {
             predio: predio.trim(),
             local: localNome.trim(),
-            qr_code_hash: qrHash.trim(),
+            qr_code_hash: qrEfetivo,
           },
         ]);
         if (error) throw error;
@@ -2722,10 +2815,10 @@ function AdminTab() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="rounded-[18px] bg-zinc-900 p-6 ring-1 ring-amber-500/30 shadow-xl">
-        <h3 className="font-display text-[18px] font-bold text-amber-400">⚙️ Painel de Gestão Falcon Serviços</h3>
-        <p className="mt-1 text-[14px] text-zinc-400">
+    <div className="space-y-4 sm:space-y-6">
+      <div className="rounded-[18px] bg-zinc-900 p-4 ring-1 ring-amber-500/30 shadow-xl sm:p-6">
+        <h3 className="font-display text-[16px] font-bold text-amber-400 sm:text-[18px]">⚙️ Painel de Gestão Falcon Serviços</h3>
+        <p className="mt-1 text-[13px] text-zinc-400 sm:text-[14px]">
           Gerencie autonomamente os locais de ronda e a equipa de seguranças por posto.
         </p>
       </div>
@@ -2735,8 +2828,8 @@ function AdminTab() {
       ) : (
         <>
           {/* SECÇÃO DE LOCAIS / POSTOS */}
-          <div className="rounded-[18px] bg-zinc-900 p-6 ring-1 ring-zinc-800 shadow-xl space-y-4">
-            <div className="flex items-center justify-between">
+          <div ref={formLocalRef} className="scroll-mt-4 rounded-[18px] bg-zinc-900 p-4 ring-1 ring-zinc-800 shadow-xl space-y-4 sm:p-6">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <h4 className="font-display text-[16px] font-bold text-zinc-100">
                 {editandoLocalId ? "✏️ Editar Local de Ronda" : "📍 Cadastrar Novo Local de Ronda"}
               </h4>
@@ -2773,16 +2866,54 @@ function AdminTab() {
                   />
                 </div>
                 <div>
-                  <label className="block text-[12px] font-semibold text-zinc-400 mb-1">Código QR / Hash</label>
+                  <label className="mb-1 flex items-center text-[12px] font-semibold text-zinc-400">
+                    Código QR
+                    {!editandoLocalId && (
+                      qrManual ? (
+                        <button
+                          type="button"
+                          onClick={() => setQrManual(false)}
+                          className="ml-auto text-[11px] font-semibold text-amber-400 underline underline-offset-2"
+                        >
+                          ↻ Gerar automático
+                        </button>
+                      ) : (
+                        <span className="ml-auto text-[11px] font-medium text-emerald-400">automático pelo prédio</span>
+                      )
+                    )}
+                  </label>
                   <input
                     type="text"
-                    value={qrHash}
-                    onChange={(e) => setQrHash(e.target.value)}
-                    placeholder="Ex.: PORT-01-MERCADO"
+                    value={editandoLocalId || qrManual ? qrHash : qrAutomatico}
+                    onChange={(e) => {
+                      setQrHash(e.target.value);
+                      setQrManual(true);
+                    }}
+                    placeholder="Ex.: samambaia-02"
                     className="w-full rounded-xl bg-zinc-950 p-3 font-mono text-[14px] text-zinc-100 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500"
                   />
                 </div>
               </div>
+
+              {qrEfetivo && (
+                <div className="flex items-center gap-4 rounded-xl bg-zinc-950 p-3 ring-1 ring-zinc-800">
+                  <QrPreview codigo={qrEfetivo} className="size-24 shrink-0 rounded-lg sm:size-28" />
+                  <div className="min-w-0 space-y-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Pré-visualização</p>
+                    <p className="truncate font-mono text-[14px] font-bold text-zinc-100">{qrEfetivo}</p>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        baixarQrPng({ codigo: qrEfetivo, predio: predio.trim() || "—", local: localNome.trim() || "—" })
+                      }
+                      className="flex items-center gap-1.5 rounded-lg bg-zinc-800 px-3 py-1.5 text-[12px] font-semibold text-zinc-200 ring-1 ring-zinc-700"
+                    >
+                      <Download className="size-3.5" /> Baixar PNG
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <button
                 type="submit"
                 disabled={salvandoLocal}
@@ -2796,42 +2927,12 @@ function AdminTab() {
               </button>
             </form>
 
-            <div className="border-t border-zinc-800 pt-5 mt-5">
-              <p className="text-[13px] font-semibold text-zinc-300 mb-3">Locais Cadastrados ({locais.length})</p>
-              {locais.length === 0 ? (
-                <p className="text-[13px] text-zinc-600">Nenhum local cadastrado ainda.</p>
-              ) : (
-                <div className="space-y-2.5 max-h-60 overflow-y-auto">
-                  {locais.map((l) => (
-                    <div key={l.id} className="flex items-center justify-between rounded-xl bg-zinc-950 p-3 text-[14px] ring-1 ring-zinc-800">
-                      <div>
-                        <p className="font-semibold text-zinc-200">{l.predio} — {l.local}</p>
-                        <p className="text-[12px] text-zinc-500"><code className="font-mono">{l.qr_code_hash}</code></p>
-                      </div>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => prepararEdicaoLocal(l)}
-                          className="rounded-lg bg-amber-500/20 px-3 py-1.5 text-[12px] font-semibold text-amber-400 ring-1 ring-amber-500/30"
-                        >
-                          Editar
-                        </button>
-                        <button
-                          onClick={() => excluirLocal(l.id)}
-                          className="rounded-lg bg-red-950 px-3 py-1.5 text-[12px] font-semibold text-red-400 ring-1 ring-red-500/30"
-                        >
-                          Excluir
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+            <LocaisQrSection locais={locais} onEditar={prepararEdicaoLocal} onExcluir={excluirLocal} />
           </div>
 
           {/* SECÇÃO DE SEGURANÇAS */}
-          <div className="rounded-[18px] bg-zinc-900 p-6 ring-1 ring-zinc-800 shadow-xl space-y-4">
-            <div className="flex items-center justify-between">
+          <div className="rounded-[18px] bg-zinc-900 p-4 ring-1 ring-zinc-800 shadow-xl space-y-4 sm:p-6">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <h4 className="font-display text-[16px] font-bold text-zinc-100">
                 {editandoSegId ? "✏️ Editar Segurança" : "🛡️ Cadastrar Novo Segurança / Postos Atribuídos"}
               </h4>
@@ -2945,12 +3046,12 @@ function AdminTab() {
               ) : (
                 <div className="space-y-2.5 max-h-60 overflow-y-auto">
                   {segurancas.map((b) => (
-                    <div key={b.id} className="flex items-center justify-between rounded-xl bg-zinc-950 p-3 text-[14px] ring-1 ring-zinc-800">
-                      <div>
+                    <div key={b.id} className="flex flex-col gap-2.5 rounded-xl bg-zinc-950 p-3 text-[14px] ring-1 ring-zinc-800 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0">
                         <p className="font-semibold text-zinc-200">{b.nome} <span className="text-xs font-normal text-zinc-500">({b.cargo} • {b.tipo_contrato || "CLT"})</span></p>
-                        <p className="text-[12px] text-amber-400 font-medium">Postos: {b.posto_atribuido || "Geral"}</p>
+                        <p className="break-words text-[12px] text-amber-400 font-medium">Postos: {b.posto_atribuido || "Geral"}</p>
                       </div>
-                      <div className="flex gap-2">
+                      <div className="grid shrink-0 grid-cols-2 gap-2 sm:flex">
                         <button
                           onClick={() => prepararEdicaoSeguranca(b)}
                           className="rounded-lg bg-amber-500/20 px-3 py-1.5 text-[12px] font-semibold text-amber-400 ring-1 ring-amber-500/30"
@@ -3135,15 +3236,15 @@ function FinanceiroPjTab() {
   });
 
   return (
-    <div className="space-y-6">
-      <div className="rounded-[18px] bg-zinc-900 p-6 ring-1 ring-amber-500/30 shadow-xl">
-        <h3 className="font-display text-[18px] font-bold text-amber-400">💰 Gestão Financeira — Colaboradores PJ</h3>
-        <p className="mt-1 text-[14px] text-zinc-400">
+    <div className="space-y-4 sm:space-y-6">
+      <div className="rounded-[18px] bg-zinc-900 p-4 ring-1 ring-amber-500/30 shadow-xl sm:p-6">
+        <h3 className="font-display text-[16px] font-bold text-amber-400 sm:text-[18px]">💰 Gestão Financeira — Colaboradores PJ</h3>
+        <p className="mt-1 text-[13px] text-zinc-400 sm:text-[14px]">
           Cálculo automático de horas trabalhadas, plantões e valores a pagar por colaborador PJ.
         </p>
       </div>
 
-      <div className="rounded-[18px] bg-zinc-900 p-6 ring-1 ring-zinc-800 shadow-xl space-y-4">
+      <div className="rounded-[18px] bg-zinc-900 p-4 ring-1 ring-zinc-800 shadow-xl space-y-4 sm:p-6">
         <span className="text-[12px] font-semibold uppercase tracking-[0.16em] text-zinc-400">
           ⚙️ Configuração e Filtros
         </span>
@@ -3207,12 +3308,12 @@ function FinanceiroPjTab() {
           {segurancasPjFiltrados.map((pj) => {
             const resumo = calcularResumoPJ(pj.nome);
             return (
-              <div key={pj.id} className="rounded-[16px] bg-zinc-900 p-5 ring-1 ring-zinc-800 shadow-xl flex items-center justify-between">
-                <div>
+              <div key={pj.id} className="rounded-[16px] bg-zinc-900 p-4 ring-1 ring-zinc-800 shadow-xl flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:p-5">
+                <div className="min-w-0">
                   <p className="font-display text-[16px] font-bold text-zinc-100">{pj.nome}</p>
-                  <p className="text-[13px] text-zinc-400 mt-0.5">Posto: <span className="font-semibold text-amber-400">{pj.posto_atribuido || "Geral"}</span> • {resumo.dias} dias trabalhados ({resumo.horas}h)</p>
+                  <p className="break-words text-[13px] text-zinc-400 mt-0.5">Posto: <span className="font-semibold text-amber-400">{pj.posto_atribuido || "Geral"}</span> • {resumo.dias} dias trabalhados ({resumo.horas}h)</p>
                 </div>
-                <div className="text-right">
+                <div className="flex flex-row-reverse items-baseline justify-between border-t border-zinc-800 pt-2 sm:block sm:shrink-0 sm:border-0 sm:pt-0 sm:text-right">
                   <p className="font-mono text-[20px] font-bold text-amber-400">
                     R$ {resumo.total.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </p>

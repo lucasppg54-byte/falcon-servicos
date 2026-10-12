@@ -1,4 +1,6 @@
 import { supabase } from "@/integrations/supabase/client";
+import { BUCKET_FOTOS, caminhoNoBucket, extrairFotos, gerarCaminhoFoto, serializarFotos } from "@/lib/fotos";
+import { podeExcluirRegistro } from "@/lib/marcacoes";
 
 const ADMIN_SEGURANCAS_PADRAO = ["Falcon (Admin)"];
 
@@ -116,34 +118,17 @@ export async function registrarRonda(input: {
   descricao?: string;
   latitude?: number | null;
   longitude?: number | null;
-  fotoFile?: File | null;
+  fotoFiles?: File[];
   isCobertura?: boolean;
   postoCobertura?: string;
 }): Promise<void> {
   const latFinal = input.latitude ?? -16.6869;
   const lonFinal = input.longitude ?? -49.2648;
 
-  let fotoUrlFinal: string | null = null;
-
-  if (input.fotoFile) {
-    const nomeArquivo = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}.jpg`;
-    const { error: uploadError } = await supabase.storage
-      .from("rondas-fotos")
-      .upload(nomeArquivo, input.fotoFile, {
-        cacheControl: "3600",
-        upsert: false,
-      });
-
-    if (uploadError) {
-      throw new Error(`Erro ao enviar foto: ${uploadError.message}`);
-    }
-
-    const { data: publicData } = supabase.storage
-      .from("rondas-fotos")
-      .getPublicUrl(nomeArquivo);
-
-    fotoUrlFinal = publicData.publicUrl;
-  }
+  const caminhosEnviados = await enviarFotos(input.fotoFiles ?? []);
+  const fotoUrlFinal = serializarFotos(
+    caminhosEnviados.map((c) => supabase.storage.from(BUCKET_FOTOS).getPublicUrl(c).data.publicUrl),
+  );
 
   let descFinal = input.descricao ?? null;
   if (input.isCobertura) {
@@ -164,7 +149,61 @@ export async function registrarRonda(input: {
   };
 
   const { error } = await supabase.from("registros_rondas").insert(payload);
+  if (error) {
+    await removerFotosDoBucket(caminhosEnviados);
+    throw error;
+  }
+}
+
+async function enviarFotos(files: File[]): Promise<string[]> {
+  const agora = new Date();
+  const enviados: string[] = [];
+  try {
+    for (const [i, file] of files.entries()) {
+      const caminho = gerarCaminhoFoto(file, agora, i);
+      const { error } = await supabase.storage.from(BUCKET_FOTOS).upload(caminho, file, {
+        cacheControl: "3600",
+        contentType: file.type || "image/jpeg",
+        upsert: false,
+      });
+      if (error) throw new Error(`Erro ao enviar foto ${i + 1} de ${files.length}: ${error.message}`);
+      enviados.push(caminho);
+    }
+  } catch (err) {
+    await removerFotosDoBucket(enviados);
+    throw err;
+  }
+  return enviados;
+}
+
+async function removerFotosDoBucket(caminhos: string[]): Promise<void> {
+  if (caminhos.length === 0) return;
+  // Melhor esforço: uma foto órfã no bucket não deve bloquear o fluxo do vigilante.
+  await supabase.storage.from(BUCKET_FOTOS).remove(caminhos).catch(() => undefined);
+}
+
+export async function excluirRegistro(
+  registro: Pick<RegistroRonda, "id" | "foto_url" | "seguranca" | "descricao">,
+  segurancaAtual: string,
+  admin: boolean,
+): Promise<void> {
+  if (!podeExcluirRegistro(registro, segurancaAtual, admin)) {
+    throw new Error("Marcações de início ou fim de plantão não podem ser apagadas.");
+  }
+
+  let query = supabase.from("registros_rondas").delete().eq("id", registro.id);
+  if (!admin) query = query.eq("seguranca", segurancaAtual);
+
+  const { data, error } = await query.select("id");
   if (error) throw error;
+  if (!data || data.length === 0) {
+    throw new Error("O registo não foi apagado (sem permissão ou já removido).");
+  }
+
+  const caminhos = extrairFotos(registro.foto_url)
+    .map((url) => caminhoNoBucket(url))
+    .filter((c): c is string => !!c);
+  await removerFotosDoBucket(caminhos);
 }
 
 export async function marcarComoCorrigido(id: string): Promise<void> {

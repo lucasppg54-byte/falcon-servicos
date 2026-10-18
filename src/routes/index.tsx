@@ -2609,10 +2609,20 @@ function Shell({ children }: { children: React.ReactNode }) {
 
 /* ---------------- Painel Administrativo ---------------- */
 
+async function apagarLinha(tabela: "segurancas" | "locais_ronda", id: string) {
+  const { data, error } = await supabase.from(tabela).delete().eq("id", id).select("id");
+  if (error) throw error;
+  // Sem política RLS de DELETE o PostgREST devolve 200 com 0 linhas — não é sucesso.
+  if (!data?.length) {
+    throw new Error("A exclusão foi bloqueada pela base de dados (permissão DELETE).");
+  }
+}
+
 function AdminTab() {
   const [locais, setLocais] = useState<LocalRonda[]>([]);
   const [segurancas, setSegurancas] = useState<SegurancaDb[]>([]);
   const [carregando, setCarregando] = useState(true);
+  const [excluindoId, setExcluindoId] = useState<string | null>(null);
 
   // Estados de Cadastro / Edição de Local (Posto)
   const [editandoLocalId, setEditandoLocalId] = useState<string | null>(null);
@@ -2640,8 +2650,8 @@ function AdminTab() {
   );
   const qrEfetivo = (editandoLocalId || qrManual ? qrHash : qrAutomatico).trim();
 
-  async function carregarDadosAdmin() {
-    setCarregando(true);
+  async function carregarDadosAdmin(silencioso = false) {
+    if (!silencioso) setCarregando(true);
     try {
       const { data: locs } = await supabase.from("locais_ronda").select("*").order("predio", { ascending: true });
       setLocais(locs || []);
@@ -2649,10 +2659,12 @@ function AdminTab() {
       const { data: segs } = await supabase.from("segurancas").select("*").order("nome", { ascending: true });
       setSegurancas(segs || []);
     } catch {
-      setLocais([]);
-      setSegurancas([]);
+      if (!silencioso) {
+        setLocais([]);
+        setSegurancas([]);
+      }
     } finally {
-      setCarregando(false);
+      if (!silencioso) setCarregando(false);
     }
   }
 
@@ -2720,13 +2732,18 @@ function AdminTab() {
 
   async function excluirLocal(id: string) {
     if (!window.confirm("Deseja excluir este local de ronda?")) return;
+    const snapshot = locais;
+    setLocais((prev) => prev.filter((l) => l.id !== id));
+    if (editandoLocalId === id) cancelarEdicaoLocal();
+    setExcluindoId(id);
     try {
-      const { error } = await supabase.from("locais_ronda").delete().eq("id", id);
-      if (error) throw error;
-      setLocais((prev) => prev.filter((l) => l.id !== id));
-      if (editandoLocalId === id) cancelarEdicaoLocal();
-    } catch {
-      window.alert("Erro ao excluir local.");
+      await apagarLinha("locais_ronda", id);
+      await carregarDadosAdmin(true);
+    } catch (err: any) {
+      setLocais(snapshot);
+      window.alert(err?.message || "Erro ao excluir local.");
+    } finally {
+      setExcluindoId(null);
     }
   }
 
@@ -2804,13 +2821,18 @@ function AdminTab() {
 
   async function excluirSeguranca(id: string) {
     if (!window.confirm("Deseja remover este segurança?")) return;
+    const snapshot = segurancas;
+    setSegurancas((prev) => prev.filter((b) => b.id !== id));
+    if (editandoSegId === id) cancelarEdicaoSeguranca();
+    setExcluindoId(id);
     try {
-      const { error } = await supabase.from("segurancas").delete().eq("id", id);
-      if (error) throw error;
-      setSegurancas((prev) => prev.filter((b) => b.id !== id));
-      if (editandoSegId === id) cancelarEdicaoSeguranca();
-    } catch {
-      window.alert("Erro ao excluir segurança.");
+      await apagarLinha("segurancas", id);
+      await carregarDadosAdmin(true);
+    } catch (err: any) {
+      setSegurancas(snapshot);
+      window.alert(err?.message || "Erro ao excluir segurança.");
+    } finally {
+      setExcluindoId(null);
     }
   }
 
@@ -3060,9 +3082,10 @@ function AdminTab() {
                         </button>
                         <button
                           onClick={() => excluirSeguranca(b.id)}
-                          className="rounded-lg bg-red-950 px-3 py-1.5 text-[12px] font-semibold text-red-400 ring-1 ring-red-500/30"
+                          disabled={excluindoId === b.id}
+                          className="rounded-lg bg-red-950 px-3 py-1.5 text-[12px] font-semibold text-red-400 ring-1 ring-red-500/30 disabled:opacity-60"
                         >
-                          Excluir
+                          {excluindoId === b.id ? "A excluir..." : "Excluir"}
                         </button>
                       </div>
                     </div>

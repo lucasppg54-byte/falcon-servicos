@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   arredondarHoras,
   descricaoPontoComInstante,
+  diasDoMes,
   fundirMarcacoes,
+  horasPlantaoArredondadas,
   montarTurnos,
   proximoTipoPonto,
   tipoPontoDaDescricao,
@@ -109,6 +111,21 @@ describe("folha offline e selfie", () => {
     expect(desc).toContain("PONTO ENTRADA");
     expect(desc).toContain(iso);
     expect(tipoPontoDaDescricao(desc)).toBe("ENTRADA");
+  });
+});
+
+describe("plantão PJ com tolerância de 30 minutos", () => {
+  it("arredonda o intervalo do dia e trata ponto único como 12h", () => {
+    const base = new Date("2026-10-01T07:00:00").getTime();
+    expect(horasPlantaoArredondadas([base, base + (8 * 60 + 20) * 60000])).toBe(8);
+    expect(horasPlantaoArredondadas([base, base + (8 * 60 + 35) * 60000])).toBe(9);
+    expect(horasPlantaoArredondadas([base])).toBe(12);
+  });
+
+  it("lista todos os dias da competência", () => {
+    expect(diasDoMes("2026-10")).toHaveLength(31);
+    expect(diasDoMes("2026-10")[0]).toBe("2026-10-01");
+    expect(diasDoMes("2026-02")).toHaveLength(28);
   });
 });
 

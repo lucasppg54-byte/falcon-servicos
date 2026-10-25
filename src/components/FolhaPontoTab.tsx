@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { BaterPontoPanel } from "@/components/BaterPontoPanel";
 import {
   JORNADA_BASE_PADRAO,
+  descricaoPonto,
+  diaLocal,
+  diasDoMes,
   fundirMarcacoes,
   gravarValorHoraExtra,
+  horaCurtaLocal,
+  isoNoDia,
   lerValoresHoraExtra,
   mesAtual,
   montarTurnos,
@@ -11,9 +15,11 @@ import {
   tipoPontoDaDescricao,
   ultimoDiaMes,
   type MarcacaoPonto,
+  type TipoPonto,
 } from "@/lib/folha-ponto";
-import { EVENTO_FILA_PONTO, listarPendentes } from "@/lib/ponto-offline";
-import { listarRegistros } from "@/lib/rondas";
+import { listarEscalasIntervalo, textoObservacaoEscala, type Escala } from "@/lib/operacao";
+import { listarPendentes } from "@/lib/ponto-offline";
+import { listarRegistros, type LocalRonda } from "@/lib/rondas";
 import { supabase } from "@/integrations/supabase/client";
 
 interface Colaborador {
@@ -43,8 +49,16 @@ export function FolhaPontoTab() {
   const [jornadaBase, setJornadaBase] = useState(JORNADA_BASE_PADRAO);
   const [valorHoraExtra, setValorHoraExtra] = useState(0);
   const [marcacoes, setMarcacoes] = useState<MarcacaoPonto[]>([]);
-  const [carregando, setCarregando] = useState(true);
+  const [escalas, setEscalas] = useState<Escala[]>([]);
+  const [locais, setLocais] = useState<LocalRonda[]>([]);
+  const [visualizado, setVisualizado] = useState(false);
+  const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState("");
+  const [editDia, setEditDia] = useState<string | null>(null);
+  const [editEntrada, setEditEntrada] = useState("");
+  const [editSaida, setEditSaida] = useState("");
+  const [editPosto, setEditPosto] = useState("");
+  const [aGravar, setAGravar] = useState(false);
 
   const funcionario = colaboradores.find((c) => c.id === funcionarioId);
 
@@ -54,7 +68,8 @@ export function FolhaPontoTab() {
         const { data } = await supabase.from("segurancas").select("*").order("nome");
         const lista = ((data || []) as Colaborador[]).filter((c) => (c as Colaborador & { ativo?: boolean }).ativo !== false);
         setColaboradores(lista);
-        if (lista[0]) setFuncionarioId((atual) => atual || lista[0].id);
+        const primeiro = lista[0];
+        if (primeiro) setFuncionarioId((atual) => atual || primeiro.id);
       } catch {
         setColaboradores([]);
       }
@@ -110,6 +125,13 @@ export function FolhaPontoTab() {
           pendente: true,
         } satisfies MarcacaoPonto));
       setMarcacoes(fundirMarcacoes(remoto, fila));
+      const [mesEscalas, locaisRes] = await Promise.all([
+        listarEscalasIntervalo(primeiroDiaMes(anoMes), ultimoDiaMes(anoMes)),
+        supabase.from("locais_ronda").select("id, qr_code_hash, predio, local"),
+      ]);
+      setEscalas(mesEscalas.itens.filter((e) => e.seguranca === funcionario.nome));
+      setLocais((locaisRes.data || []) as LocalRonda[]);
+      setVisualizado(true);
     } catch {
       const fila = (await listarPendentes())
         .filter((p) => p.seguranca === funcionario.nome && p.created_at.slice(0, 7) === anoMes)
@@ -123,23 +145,84 @@ export function FolhaPontoTab() {
           pendente: true,
         } satisfies MarcacaoPonto));
       setMarcacoes(fila);
+      setVisualizado(true);
       setErro(fila.length > 0 ? "Sem ligação. A mostrar só os pontos ainda por sincronizar." : "Não foi possível carregar a folha de ponto.");
     } finally {
       setCarregando(false);
     }
   }
 
-  useEffect(() => {
-    carregarMarcacoes();
-    const ouvir = () => void carregarMarcacoes();
-    window.addEventListener(EVENTO_FILA_PONTO, ouvir);
-    return () => window.removeEventListener(EVENTO_FILA_PONTO, ouvir);
-  }, [funcionario?.nome, anoMes]);
-
   const turnos = useMemo(() => montarTurnos(marcacoes, jornadaBase), [marcacoes, jornadaBase]);
+  const dias = useMemo(() => (visualizado ? diasDoMes(anoMes) : []), [visualizado, anoMes]);
+  const postos = useMemo(() => Array.from(new Set(locais.map((l) => l.predio))).sort(), [locais]);
   const totalHoras = turnos.reduce((acc, t) => acc + t.horasArredondadas, 0);
   const totalExtras = turnos.reduce((acc, t) => acc + t.horasExtras, 0);
   const totalPagarExtras = totalExtras * valorHoraExtra;
+
+  function observacaoDia(dia: string) {
+    return escalas
+      .filter((e) => e.data === dia)
+      .map((e) => textoObservacaoEscala(e))
+      .filter(Boolean)
+      .join(" · ");
+  }
+
+  function marcasDoDia(dia: string) {
+    return marcacoes.filter((m) => diaLocal(m.created_at) === dia);
+  }
+
+  function abrirEdicao(dia: string) {
+    const doDia = marcasDoDia(dia);
+    const entrada = doDia.find((m) => m.tipo === "ENTRADA");
+    const saida = doDia.find((m) => m.tipo === "SAIDA");
+    setEditDia(dia);
+    setEditEntrada(entrada ? horaCurtaLocal(entrada.created_at) : "");
+    setEditSaida(saida ? horaCurtaLocal(saida.created_at) : "");
+    setEditPosto(entrada?.predio || saida?.predio || postos[0] || "");
+  }
+
+  async function gravarMarcacao(tipo: TipoPonto, hora: string, existente?: MarcacaoPonto) {
+    if (!funcionario || !editDia || !hora) return;
+    const local = locais.find((l) => l.predio === editPosto) ?? locais[0];
+    if (!local) throw new Error("Não há posto cadastrado para esta correção.");
+    const created_at = isoNoDia(editDia, hora);
+    const descricao = `${descricaoPonto(tipo, local.predio, local.local)} · correção gestor`;
+    if (existente && !existente.pendente) {
+      const { error } = await supabase
+        .from("registros_rondas")
+        .update({ created_at, descricao, local_id: local.id })
+        .eq("id", existente.id);
+      if (!error) return;
+    }
+    const { error } = await supabase.from("registros_rondas").insert([
+      {
+        local_id: local.id,
+        seguranca: funcionario.nome,
+        status: "OK",
+        gravidade: "MODERADA",
+        descricao,
+        created_at,
+      },
+    ]);
+    if (error) throw error;
+  }
+
+  async function guardarEdicao() {
+    if (!editDia) return;
+    setAGravar(true);
+    setErro("");
+    try {
+      const doDia = marcasDoDia(editDia);
+      if (editEntrada) await gravarMarcacao("ENTRADA", editEntrada, doDia.find((m) => m.tipo === "ENTRADA"));
+      if (editSaida) await gravarMarcacao("SAIDA", editSaida, doDia.find((m) => m.tipo === "SAIDA"));
+      setEditDia(null);
+      await carregarMarcacoes();
+    } catch (err: any) {
+      setErro(err?.message || "Não foi possível corrigir o dia.");
+    } finally {
+      setAGravar(false);
+    }
+  }
 
   function persistirValorHe(valor: number) {
     setValorHoraExtra(valor);
@@ -244,7 +327,7 @@ export function FolhaPontoTab() {
       <div className="rounded-[18px] bg-zinc-900 p-4 ring-1 ring-amber-500/30 shadow-xl sm:p-6">
         <h3 className="font-display text-[16px] font-bold text-amber-400 sm:text-[18px]">🕒 Folha de Ponto</h3>
         <p className="mt-1 text-[13px] text-zinc-400 sm:text-[14px]">
-          Entrada e saída com selfie obrigatória e QR do posto. Funciona offline: a hora original é guardada e sincronizada depois. Tolerância de 30 minutos para PJ.
+          Consulta e correção gerencial. A selfie e as câmaras ficam só no ecrã de campo do vigilante. Tolerância de 30 minutos.
         </p>
       </div>
 
@@ -254,7 +337,10 @@ export function FolhaPontoTab() {
             Funcionário
             <select
               value={funcionarioId}
-              onChange={(e) => setFuncionarioId(e.target.value)}
+              onChange={(e) => {
+                setFuncionarioId(e.target.value);
+                setVisualizado(false);
+              }}
               className="mt-1 w-full rounded-xl bg-zinc-950 p-3 text-[14px] font-medium text-zinc-100 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500"
             >
               {colaboradores.length === 0 ? (
@@ -273,7 +359,10 @@ export function FolhaPontoTab() {
             <input
               type="month"
               value={anoMes}
-              onChange={(e) => setAnoMes(e.target.value)}
+              onChange={(e) => {
+                setAnoMes(e.target.value);
+                setVisualizado(false);
+              }}
               className="mt-1 w-full rounded-xl bg-zinc-950 p-3 text-[14px] text-zinc-100 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500"
             />
           </label>
@@ -301,17 +390,24 @@ export function FolhaPontoTab() {
           </label>
         </div>
 
-        <div className="flex justify-end">
+        <div className="flex flex-wrap justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => void carregarMarcacoes()}
+            disabled={!funcionario || carregando}
+            className="rounded-lg bg-amber-500 px-3 py-1.5 text-[12px] font-bold text-zinc-950 disabled:opacity-50"
+          >
+            {carregando ? "A carregar..." : "Visualizar"}
+          </button>
           <button
             type="button"
             onClick={imprimirFolha}
-            disabled={!funcionario}
+            disabled={!funcionario || !visualizado}
             className="rounded-lg bg-zinc-800 px-3 py-1.5 text-[12px] font-semibold text-zinc-100 ring-1 ring-zinc-700 disabled:opacity-50"
           >
             Imprimir / Exportar mês
           </button>
         </div>
-        {funcionario && <BaterPontoPanel seguranca={funcionario.nome} onRegistado={() => void carregarMarcacoes()} />}
         {erro && <p className="text-[13px] font-medium text-red-400">{erro}</p>}
       </div>
 
@@ -323,14 +419,10 @@ export function FolhaPontoTab() {
       </div>
 
       <div className="rounded-[18px] bg-zinc-900 p-4 ring-1 ring-zinc-800 shadow-xl sm:p-6">
-        {carregando ? (
+        {!visualizado ? (
+          <p className="text-center text-[13px] text-zinc-500 py-6">Escolha o funcionário e a competência, depois clique em Visualizar.</p>
+        ) : carregando ? (
           <p className="text-center text-[13px] text-zinc-500 py-6">A carregar marcações...</p>
-        ) : turnos.length === 0 ? (
-          <p className="text-center text-[13px] text-zinc-500 py-6">
-            {marcacoes.some((m) => m.pendente)
-              ? "O ponto pendente está na fila acima. O turno completo aparece quando a entrada e a saída estiverem ambas disponíveis."
-              : "Sem entradas ou saídas neste mês."}
-          </p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-[13px]">
@@ -341,37 +433,76 @@ export function FolhaPontoTab() {
                   <th className="pb-2 pr-3">Saída</th>
                   <th className="pb-2 pr-3">Selfie</th>
                   <th className="pb-2 pr-3">Posto</th>
+                  <th className="pb-2 pr-3">Observação</th>
                   <th className="pb-2 pr-3 text-center">Horas</th>
                   <th className="pb-2 pr-3 text-center">Extras</th>
-                  <th className="pb-2 text-right">Valor HE</th>
+                  <th className="pb-2 pr-3 text-right">Valor HE</th>
+                  <th className="pb-2"></th>
                 </tr>
               </thead>
               <tbody>
-                {turnos.map((t) => (
-                  <tr key={t.entrada.id} className="border-t border-zinc-800 text-zinc-200">
-                    <td className="py-2.5 pr-3 whitespace-nowrap">{formatarData(t.entrada.created_at)}</td>
-                    <td className="py-2.5 pr-3 font-mono text-emerald-400">
-                      {formatarHora(t.entrada.created_at)}
-                      {t.entrada.pendente && <span className="ml-1 text-[10px] font-bold uppercase text-amber-400">pendente</span>}
-                    </td>
-                    <td className="py-2.5 pr-3 font-mono text-amber-400">
-                      {t.saida ? formatarHora(t.saida.created_at) : "Aberto"}
-                      {t.saida?.pendente && <span className="ml-1 text-[10px] font-bold uppercase text-amber-400">pendente</span>}
-                    </td>
-                    <td className="py-2.5 pr-3">
-                      <div className="flex gap-1">
-                        <MiniSelfie url={t.entrada.foto_url} rotulo="Entrada" />
-                        <MiniSelfie url={t.saida?.foto_url} rotulo="Saída" />
-                      </div>
-                    </td>
-                    <td className="py-2.5 pr-3 text-zinc-400">{t.entrada.predio || "—"}</td>
-                    <td className="py-2.5 pr-3 text-center">{t.saida ? `${t.horasArredondadas}h` : "—"}</td>
-                    <td className="py-2.5 pr-3 text-center">{t.saida ? `${t.horasExtras}h` : "—"}</td>
-                    <td className="py-2.5 text-right text-amber-300">
-                      {t.saida ? dinheiro(t.horasExtras * valorHoraExtra) : "—"}
-                    </td>
-                  </tr>
-                ))}
+                {dias.map((dia) => {
+                  const doDia = marcasDoDia(dia);
+                  const entrada = doDia.find((m) => m.tipo === "ENTRADA");
+                  const saida = doDia.find((m) => m.tipo === "SAIDA");
+                  const turno = turnos.find((t) => diaLocal(t.entrada.created_at) === dia);
+                  const obs = observacaoDia(dia);
+                  if (editDia === dia) {
+                    return (
+                      <tr key={dia} className="border-t border-zinc-800 text-zinc-200">
+                        <td className="py-2.5 pr-3 whitespace-nowrap">{formatarData(`${dia}T12:00:00`)}</td>
+                        <td className="py-2.5 pr-3">
+                          <input type="time" value={editEntrada} onChange={(e) => setEditEntrada(e.target.value)} className="rounded-lg bg-zinc-950 p-1.5 text-[12px] ring-1 ring-zinc-700" />
+                        </td>
+                        <td className="py-2.5 pr-3">
+                          <input type="time" value={editSaida} onChange={(e) => setEditSaida(e.target.value)} className="rounded-lg bg-zinc-950 p-1.5 text-[12px] ring-1 ring-zinc-700" />
+                        </td>
+                        <td className="py-2.5 pr-3">—</td>
+                        <td className="py-2.5 pr-3">
+                          <select value={editPosto} onChange={(e) => setEditPosto(e.target.value)} className="rounded-lg bg-zinc-950 p-1.5 text-[12px] ring-1 ring-zinc-700">
+                            {postos.map((p) => (
+                              <option key={p} value={p}>{p}</option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="py-2.5 pr-3 text-zinc-400" colSpan={4}>{obs || "—"}</td>
+                        <td className="py-2.5 text-right whitespace-nowrap">
+                          <button type="button" disabled={aGravar} onClick={() => void guardarEdicao()} className="mr-2 text-[11px] font-bold text-amber-400">Guardar</button>
+                          <button type="button" onClick={() => setEditDia(null)} className="text-[11px] font-semibold text-zinc-400">Cancelar</button>
+                        </td>
+                      </tr>
+                    );
+                  }
+                  return (
+                    <tr key={dia} className="border-t border-zinc-800 text-zinc-200">
+                      <td className="py-2.5 pr-3 whitespace-nowrap">{formatarData(`${dia}T12:00:00`)}</td>
+                      <td className="py-2.5 pr-3 font-mono text-emerald-400">
+                        {entrada ? formatarHora(entrada.created_at) : "—"}
+                        {entrada?.pendente && <span className="ml-1 text-[10px] font-bold uppercase text-amber-400">pendente</span>}
+                      </td>
+                      <td className="py-2.5 pr-3 font-mono text-amber-400">
+                        {saida ? formatarHora(saida.created_at) : entrada ? "Aberto" : "—"}
+                        {saida?.pendente && <span className="ml-1 text-[10px] font-bold uppercase text-amber-400">pendente</span>}
+                      </td>
+                      <td className="py-2.5 pr-3">
+                        <div className="flex gap-1">
+                          <MiniSelfie url={entrada?.foto_url} rotulo="Entrada" />
+                          <MiniSelfie url={saida?.foto_url} rotulo="Saída" />
+                        </div>
+                      </td>
+                      <td className="py-2.5 pr-3 text-zinc-400">{entrada?.predio || saida?.predio || "—"}</td>
+                      <td className="py-2.5 pr-3 text-zinc-400">{obs || "—"}</td>
+                      <td className="py-2.5 pr-3 text-center">{turno?.saida ? `${turno.horasArredondadas}h` : "—"}</td>
+                      <td className="py-2.5 pr-3 text-center">{turno?.saida ? `${turno.horasExtras}h` : "—"}</td>
+                      <td className="py-2.5 pr-3 text-right text-amber-300">
+                        {turno?.saida ? dinheiro(turno.horasExtras * valorHoraExtra) : "—"}
+                      </td>
+                      <td className="py-2.5 text-right">
+                        <button type="button" onClick={() => abrirEdicao(dia)} className="text-[11px] font-semibold text-amber-400">Editar</button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -381,7 +512,7 @@ export function FolhaPontoTab() {
   );
 }
 
-function MiniSelfie({ url, rotulo }: { url?: string | null; rotulo: string }) {
+function MiniSelfie({ url, rotulo }: { url?: string | null | undefined; rotulo: string }) {
   if (!url) return <span className="text-[10px] text-zinc-600">—</span>;
   return (
     <a href={url} target="_blank" rel="noreferrer" title={`Selfie de ${rotulo}`}>

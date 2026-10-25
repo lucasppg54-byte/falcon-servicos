@@ -18,13 +18,13 @@ import { gerarPinAcesso } from "@/lib/pin";
 import { empresaExistente } from "@/lib/empresas";
 import { fotosVisiveis } from "@/lib/fotos";
 import { ehIos, gravarPreferenciaGaleria, guardarNaGaleria, lerPreferenciaGaleria } from "@/lib/galeria";
+import { ehMarcacaoPonto, horasPlantaoArredondadas } from "@/lib/folha-ponto";
 import { ehMarcacaoPlantao, podeExcluirRegistro } from "@/lib/marcacoes";
 import { baixarQrPng, gerarProximoCodigo } from "@/lib/qr";
 import { QrScanner } from "@/components/QrScanner";
 import { LocaisQrSection, QrPreview } from "@/components/LocaisQrSection";
 import { FolhaPontoTab } from "@/components/FolhaPontoTab";
 import { EscalasTab } from "@/components/EscalasTab";
-import { AjustesPontoTab } from "@/components/AjustesPontoTab";
 import { BaterPontoPanel } from "@/components/BaterPontoPanel";
 import { IndicadorSincronizacao } from "@/components/IndicadorSincronizacao";
 import { supabase } from "@/integrations/supabase/client";
@@ -57,7 +57,7 @@ export const Route = createFileRoute("/")({
   component: RondaApp,
 });
 
-type Tab = "registrar" | "checklist" | "historico" | "ocorrencias" | "financeiro" | "ponto" | "escalas" | "ajustes" | "admin";
+type Tab = "registrar" | "checklist" | "historico" | "ocorrencias" | "financeiro" | "ponto" | "escalas" | "admin";
 
 function lerSessao(chave: string) {
   return typeof window !== "undefined" ? (localStorage.getItem(chave) ?? "") : "";
@@ -573,9 +573,6 @@ function MainScreen({
             <TabButton variant="scroll" active={tab === "escalas"} onClick={() => setTab("escalas")}>
               📅 Escalas
             </TabButton>
-            <TabButton variant="scroll" active={tab === "ajustes"} onClick={() => setTab("ajustes")}>
-              ✍️ Ajustes
-            </TabButton>
             <TabButton variant="scroll" active={tab === "admin"} onClick={() => setTab("admin")}>
               ⚙️ Postos & Equipa
             </TabButton>
@@ -727,7 +724,6 @@ function MainScreen({
             {tab === "financeiro" && <FinanceiroPjTab />}
             {tab === "ponto" && <FolhaPontoTab />}
             {tab === "escalas" && <EscalasTab gestor={seguranca} />}
-            {tab === "ajustes" && <AjustesPontoTab seguranca={seguranca} admin={admin} />}
             {tab === "admin" && <AdminTab />}
           </div>
         </div>
@@ -750,9 +746,6 @@ function MainScreen({
         <TabButton variant="grid" active={tab === "ocorrencias"} onClick={() => setTab("ocorrencias")}>
           Livro Ata
         </TabButton>
-        <TabButton variant="grid" active={tab === "ajustes"} onClick={() => setTab("ajustes")}>
-          Ajustes
-        </TabButton>
         {admin && (
           <>
             <TabButton variant="grid" active={tab === "financeiro"} onClick={() => setTab("financeiro")}>
@@ -763,9 +756,6 @@ function MainScreen({
             </TabButton>
             <TabButton variant="grid" active={tab === "escalas"} onClick={() => setTab("escalas")}>
               📅 Escalas
-            </TabButton>
-            <TabButton variant="grid" active={tab === "ajustes"} onClick={() => setTab("ajustes")}>
-              ✍️ Ajustes
             </TabButton>
             <TabButton variant="grid" active={tab === "admin"} onClick={() => setTab("admin")}>
               ⚙️ Admin
@@ -845,8 +835,6 @@ function MainScreen({
           <HistoricoTab admin={admin} segurancaAtual={seguranca} />
         ) : tab === "ocorrencias" ? (
           <OcorrenciasTab seguranca={seguranca} admin={admin} />
-        ) : tab === "ajustes" ? (
-          <AjustesPontoTab seguranca={seguranca} admin={admin} />
         ) : tab === "financeiro" ? (
           <FinanceiroPjTab />
         ) : tab === "ponto" ? (
@@ -1060,10 +1048,11 @@ function RegistrarTab({ seguranca, postoAtribuido, isCobertura, admin }: { segur
     const regsDoTurnoAtual = idxNovoTurno !== -1 ? regs.slice(0, idxNovoTurno) : regs;
 
     return regsDoTurnoAtual.some(
-      (r) => 
+      (r) =>
         r.local_id === localId &&
-        !r.descricao?.includes("PLANTÃO FINALIZADO") && 
-        !r.descricao?.includes("NOVO PLANTÃO")
+        !ehMarcacaoPonto(r.descricao) &&
+        !r.descricao?.includes("PLANTÃO FINALIZADO") &&
+        !r.descricao?.includes("NOVO PLANTÃO"),
     );
   }
 
@@ -1142,10 +1131,10 @@ function RegistrarTab({ seguranca, postoAtribuido, isCobertura, admin }: { segur
 
   return (
     <>
-      <BaterPontoPanel seguranca={seguranca} />
+      {!admin && <BaterPontoPanel seguranca={seguranca} postoAtribuido={postoAtribuido} />}
 
       <p className="mt-2 px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">Ronda do posto</p>
-      <QrScanner onDetect={(val) => consultar(val, false)} disabled={buscando} />
+      {!admin && <QrScanner onDetect={(val) => consultar(val, false)} disabled={buscando} />}
 
       <div className="mt-4">
         <label className="px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
@@ -2245,7 +2234,7 @@ function OcorrenciasTab({ seguranca, admin }: { seguranca: string; admin: boolea
 
         <textarea
           id="livro-ata-texto"
-          rows={4}
+          rows={10}
           value={texto}
           onChange={(e) => {
             setTexto(e.target.value);
@@ -2253,8 +2242,8 @@ function OcorrenciasTab({ seguranca, admin }: { seguranca: string; admin: boolea
             setSucesso(false);
           }}
           maxLength={LIMITE_LIVRO_ATA}
-          placeholder="Ex.: Manutenção na central de alarme, apoio ao colaborador..."
-          className="mt-2.5 w-full resize-none rounded-[12px] bg-zinc-900 p-3 text-[15px] text-zinc-100 placeholder:text-zinc-600 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500"
+          placeholder="Ex.: Manutenção na central de alarme, apoio ao colaborador... O texto pode ser revisto livremente antes de assinar."
+          className="mt-2.5 min-h-40 w-full resize-y rounded-[12px] bg-zinc-900 p-3 text-[15px] leading-relaxed text-zinc-100 placeholder:text-zinc-600 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500"
         />
         <div className="mt-1 flex items-center justify-between text-[11px]">
           <span className={texto.trim().length > 0 && texto.trim().length < 5 ? "text-amber-400" : "text-zinc-600"}>
@@ -2280,7 +2269,7 @@ function OcorrenciasTab({ seguranca, admin }: { seguranca: string; admin: boolea
         </button>
       </div>
 
-      <div className="mb-3 rounded-[14px] bg-zinc-950 p-3 ring-1 ring-zinc-800 space-y-2.5">
+      {admin && <div className="mb-3 rounded-[14px] bg-zinc-950 p-3 ring-1 ring-zinc-800 space-y-2.5">
         <div className="flex items-center justify-between">
           <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">🔍 Filtrar Livro Ata</span>
           {temFiltros && (
@@ -2339,8 +2328,9 @@ function OcorrenciasTab({ seguranca, admin }: { seguranca: string; admin: boolea
             />
           </label>
         </div>
-      </div>
+      </div>}
 
+      {admin && (
       <button
         onClick={() => gerarRelatorioLivroAta(listaFiltrada)}
         disabled={carregando || listaFiltrada.length === 0}
@@ -2348,6 +2338,7 @@ function OcorrenciasTab({ seguranca, admin }: { seguranca: string; admin: boolea
       >
         🖨️ Imprimir / Gerar Relatório do Livro Ata
       </button>
+      )}
 
       <div className="mb-2.5 flex items-center justify-between px-1">
         <p className="font-display text-[15px] font-semibold text-zinc-200">
@@ -2407,7 +2398,7 @@ function OcorrenciasTab({ seguranca, admin }: { seguranca: string; admin: boolea
   );
 }
 
-const LIMITE_LIVRO_ATA = 1000;
+const LIMITE_LIVRO_ATA = 8000;
 
 function normalizarBusca(s: string): string {
   return s
@@ -3373,21 +3364,14 @@ function FinanceiroPjTab() {
     const diasTrabalhadosCount = diasMap.size;
 
     diasMap.forEach((tempos) => {
-      if (tempos.length >= 2) {
-        const minTempo = Math.min(...tempos);
-        const maxTempo = Math.max(...tempos);
-        const diffHoras = (maxTempo - minTempo) / (1000 * 60 * 60);
-        totalHorasGerais += diffHoras > 0 ? diffHoras : 12; 
-      } else {
-        totalHorasGerais += 12; 
-      }
+      totalHorasGerais += horasPlantaoArredondadas(tempos);
     });
 
     const totalPagar = totalHorasGerais * valorHora;
 
     return {
       dias: diasTrabalhadosCount,
-      horas: Math.round(totalHorasGerais * 10) / 10,
+      horas: totalHorasGerais,
       total: totalPagar,
     };
   }
@@ -3402,7 +3386,7 @@ function FinanceiroPjTab() {
       <div className="rounded-[18px] bg-zinc-900 p-4 ring-1 ring-amber-500/30 shadow-xl sm:p-6">
         <h3 className="font-display text-[16px] font-bold text-amber-400 sm:text-[18px]">💰 Gestão Financeira — Colaboradores PJ</h3>
         <p className="mt-1 text-[13px] text-zinc-400 sm:text-[14px]">
-          Cálculo automático de horas trabalhadas, plantões e valores a pagar por colaborador PJ.
+          Horas de plantão com tolerância de 30 minutos e valor a pagar por colaborador PJ.
         </p>
       </div>
 

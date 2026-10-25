@@ -26,6 +26,14 @@ export interface RegistroRonda {
   locais_ronda: { predio: string; local: string; qr_code_hash: string } | null;
 }
 
+export function normalizarNome(valor: string): string {
+  return valor
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
 export function normalizarCodigoQr(valor: string): string {
   const bruto = valor.trim();
   if (!bruto) return "";
@@ -43,46 +51,44 @@ export function normalizarCodigoQr(valor: string): string {
   return bruto.toLowerCase();
 }
 
+function localAutorizado(local: LocalRonda, postoAtribuido?: string | null, isAdmin = false): LocalRonda | null {
+  if (isAdmin || !postoAtribuido || postoAtribuido.toLowerCase() === "geral") return local;
+  const postoNorm = normalizarNome(postoAtribuido);
+  const predioNorm = normalizarNome(local.predio);
+  if (!postoNorm || !predioNorm) return null;
+  if (postoNorm.includes(predioNorm) || predioNorm.includes(postoNorm)) return local;
+  return null;
+}
+
 export async function buscarLocalPorQr(qrCodeHash: string, postoAtribuido?: string | null, isAdmin = false): Promise<LocalRonda | null> {
   const codigo = normalizarCodigoQr(qrCodeHash);
-  
-  let query = supabase
+  if (!codigo) return null;
+
+  const { data, error } = await supabase
     .from("locais_ronda")
     .select("id, qr_code_hash, predio, local")
     .ilike("qr_code_hash", codigo);
 
-  const { data, error } = await query.maybeSingle();
   if (error) throw error;
 
-  if (data) {
-    if (isAdmin || !postoAtribuido || postoAtribuido.toLowerCase() === "geral") {
-      return data;
-    }
+  const exacto = ((data || []) as LocalRonda[]).find((l) => normalizarCodigoQr(l.qr_code_hash) === codigo);
+  if (exacto) return localAutorizado(exacto, postoAtribuido, isAdmin);
 
-    const postoNorm = normalizarNome(postoAtribuido);
-    const predioNorm = normalizarNome(data.predio);
-
-    if (postoNorm.includes(predioNorm) || predioNorm.includes(postoNorm)) {
-      return data;
-    }
-  }
-
-  let queryFallback = supabase
-    .from("locais_ronda")
-    .select("id, qr_code_hash, predio, local");
-
+  let queryFallback = supabase.from("locais_ronda").select("id, qr_code_hash, predio, local");
   if (!isAdmin && postoAtribuido && postoAtribuido.toLowerCase() !== "geral") {
     queryFallback = queryFallback.ilike("predio", `%${postoAtribuido}%`);
   }
 
-  const { data: todosLocais } = await queryFallback;
+  const { data: todosLocais, error: erroLista } = await queryFallback;
+  if (erroLista) throw erroLista;
   if (!todosLocais || todosLocais.length === 0) return null;
 
-  const encontrado = todosLocais.find(
-    (l) => l.qr_code_hash.toLowerCase().includes(codigo) || codigo.includes(l.qr_code_hash.toLowerCase())
-  );
+  const encontrado = (todosLocais as LocalRonda[]).find((l) => {
+    const hash = normalizarCodigoQr(l.qr_code_hash);
+    return hash === codigo || hash.includes(codigo) || codigo.includes(hash);
+  });
 
-  return encontrado || null;
+  return encontrado ? localAutorizado(encontrado, postoAtribuido, isAdmin) : null;
 }
 
 export async function registrarRonda(input: {

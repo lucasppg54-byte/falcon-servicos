@@ -176,7 +176,7 @@ export function QrScanner({
                   onClick={() => setCameraAtiva(true)}
                   className="mt-4 rounded-[12px] bg-gradient-to-r from-amber-500 to-amber-600 px-6 py-3 font-display text-[14px] font-bold text-zinc-950 shadow-md active:translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  Ativar câmera
+                  Ativar câmara
                 </button>
               )}
             </div>

@@ -1,27 +1,27 @@
 import { useEffect, useState } from "react";
 import { CapturaSelfie } from "@/components/CapturaSelfie";
-import { QrScanner } from "@/components/QrScanner";
 import { proximoTipoPonto, tipoPontoDaDescricao, type MarcacaoPonto, type TipoPonto } from "@/lib/folha-ponto";
 import {
   EVENTO_FILA_PONTO,
   listarPendentes,
   precacheLocaisPonto,
   registarPontoCampo,
-  resolverLocalPonto,
+  resolverLocalDoPosto,
   type PontoPendente,
 } from "@/lib/ponto-offline";
-import { listarRegistros, normalizarCodigoQr } from "@/lib/rondas";
+import { listarRegistros } from "@/lib/rondas";
 
 export function BaterPontoPanel({
   seguranca,
+  postoAtribuido,
   onRegistado,
 }: {
   seguranca: string;
+  postoAtribuido: string;
   onRegistado?: () => void;
 }) {
   const [selfie, setSelfie] = useState<File | null>(null);
   const [cicloSelfie, setCicloSelfie] = useState(0);
-  const [codigo, setCodigo] = useState("");
   const [tipo, setTipo] = useState<TipoPonto>("ENTRADA");
   const [pendentes, setPendentes] = useState<PontoPendente[]>([]);
   const [registando, setRegistando] = useState(false);
@@ -59,24 +59,21 @@ export function BaterPontoPanel({
     return () => window.removeEventListener(EVENTO_FILA_PONTO, ouvir);
   }, [seguranca]);
 
-  async function bater(codigoBruto: string) {
+  async function bater() {
     if (!selfie) {
-      setErro("Capture a selfie antes de ler o QR ou confirmar o ponto.");
+      setErro("Capture a selfie antes de registar o ponto.");
       return;
     }
-    const codigoLimpo = normalizarCodigoQr(codigoBruto);
-    if (!codigoLimpo) return;
     setRegistando(true);
     setErro("");
     setOk("");
     try {
-      const local = await resolverLocalPonto(codigoLimpo);
+      const local = await resolverLocalDoPosto(postoAtribuido);
       if (!local) {
-        setErro(`QR "${codigoLimpo}" não encontrado (nem no posto nem no cache offline).`);
+        setErro(`Não há posto em cache para "${postoAtribuido}". Abra a aplicação online uma vez para guardar os locais.`);
         return;
       }
       const resultado = await registarPontoCampo({ local, seguranca, tipo, selfie });
-      setCodigo("");
       setSelfie(null);
       setCicloSelfie((n) => n + 1);
       if (resultado.modo === "offline") {
@@ -97,8 +94,10 @@ export function BaterPontoPanel({
     <div className="rounded-[18px] bg-zinc-900 p-4 ring-1 ring-zinc-800 shadow-xl space-y-3 sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <p className="font-display text-[15px] font-bold text-zinc-100">Bater ponto — {seguranca}</p>
-          <p className="text-[12px] text-zinc-400">Selfie + QR do posto. Funciona sem internet; a hora original é preservada.</p>
+          <p className="font-display text-[15px] font-bold text-zinc-100">Ponto — {seguranca}</p>
+          <p className="text-[12px] text-zinc-400">
+            Selfie obrigatória no posto {postoAtribuido || "atribuído"}. A câmara fecha depois da captura.
+          </p>
         </div>
         <span className={`rounded-md px-2 py-1 text-[11px] font-bold ring-1 ${tipo === "ENTRADA" ? "bg-emerald-500/15 text-emerald-400 ring-emerald-500/30" : "bg-amber-500/15 text-amber-400 ring-amber-500/30"}`}>
           Próxima: {tipo === "ENTRADA" ? "ENTRADA" : "SAÍDA"}
@@ -107,26 +106,14 @@ export function BaterPontoPanel({
 
       <CapturaSelfie key={cicloSelfie} onCapturar={setSelfie} disabled={registando} />
 
-      <QrScanner disabled={registando || !selfie} onDetect={(valor) => void bater(valor)} />
-
-      <div className="flex gap-2">
-        <input
-          value={codigo}
-          onChange={(e) => setCodigo(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && void bater(codigo)}
-          placeholder="Ou digite o código QR do posto"
-          className="flex-1 rounded-xl bg-zinc-950 p-3 font-mono text-[14px] text-zinc-100 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500"
-        />
-        <button
-          type="button"
-          disabled={registando || !selfie || !codigo.trim()}
-          onClick={() => void bater(codigo)}
-          className="rounded-xl bg-amber-500 px-4 py-2 text-[13px] font-bold text-zinc-950 disabled:opacity-50"
-        >
-          {registando ? "A gravar..." : "Registar"}
-        </button>
-      </div>
-      {!selfie && <p className="text-[12px] text-amber-300">A câmara do QR só fica ativa depois da selfie.</p>}
+      <button
+        type="button"
+        disabled={registando || !selfie}
+        onClick={() => void bater()}
+        className="w-full rounded-xl bg-amber-500 px-4 py-2.5 text-[13px] font-bold text-zinc-950 disabled:opacity-50"
+      >
+        {registando ? "A gravar..." : "Registar ponto"}
+      </button>
       {erro && <p className="text-[13px] font-medium text-red-400">{erro}</p>}
       {ok && <p className="text-[13px] font-medium text-emerald-400">{ok}</p>}
 

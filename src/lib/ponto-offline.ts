@@ -1,6 +1,6 @@
 import { BUCKET_FOTOS, gerarCaminhoSelfiePonto } from "@/lib/fotos";
 import { descricaoPontoComInstante, type TipoPonto } from "@/lib/folha-ponto";
-import { buscarLocalPorQr, normalizarCodigoQr, type LocalRonda } from "@/lib/rondas";
+import { buscarLocalPorQr, normalizarCodigoQr, normalizarNome, type LocalRonda } from "@/lib/rondas";
 import { supabase } from "@/integrations/supabase/client";
 
 const DB_NOME = "falcon-ponto-offline";
@@ -110,6 +110,20 @@ export async function resolverLocalPonto(codigo: string): Promise<LocalRonda | n
     }
   }
   return lerCacheLocais().find((l) => normalizarCodigoQr(l.qr_code_hash) === limpo) ?? null;
+}
+
+export async function resolverLocalDoPosto(posto: string): Promise<LocalRonda | null> {
+  await precacheLocaisPonto();
+  const cache = lerCacheLocais();
+  const alvo = normalizarNome(posto || "");
+  if (alvo && alvo !== "geral") {
+    const doPosto = cache.filter((l) => {
+      const predio = normalizarNome(l.predio);
+      return predio.includes(alvo) || alvo.includes(predio);
+    });
+    if (doPosto[0]) return doPosto[0];
+  }
+  return cache[0] ?? null;
 }
 
 export async function precacheLocaisPonto() {

@@ -132,6 +132,38 @@ export function ultimoDiaMes(anoMes: string): string {
   return `${anoMes}-${String(ultimo).padStart(2, "0")}`;
 }
 
+export function diasDoMes(anoMes: string): string[] {
+  const [ano = 0, mes = 0] = anoMes.split("-").map(Number);
+  if (!ano || !mes) return [];
+  const ultimo = new Date(ano, mes, 0).getDate();
+  return Array.from({ length: ultimo }, (_, i) => `${anoMes}-${String(i + 1).padStart(2, "0")}`);
+}
+
+export function isoNoDia(dia: string, hora: string): string {
+  const [ano = 0, mes = 1, d = 1] = dia.split("-").map(Number);
+  const [hh = 0, mm = 0] = hora.split(":").map(Number);
+  return new Date(ano, mes - 1, d, hh, mm, 0).toISOString();
+}
+
+export function diaLocal(iso: string): string {
+  const data = new Date(iso);
+  return `${data.getFullYear()}-${String(data.getMonth() + 1).padStart(2, "0")}-${String(data.getDate()).padStart(2, "0")}`;
+}
+
+export function horaCurtaLocal(iso: string): string {
+  const data = new Date(iso);
+  return `${String(data.getHours()).padStart(2, "0")}:${String(data.getMinutes()).padStart(2, "0")}`;
+}
+
+/** Plantão PJ: um único registo conta 12h; o intervalo real segue a tolerância de 30 min. */
+export function horasPlantaoArredondadas(temposMs: number[]): number {
+  if (temposMs.length === 0) return 0;
+  if (temposMs.length === 1) return arredondarHoras(JORNADA_BASE_PADRAO * 60);
+  const minutos = (Math.max(...temposMs) - Math.min(...temposMs)) / 60000;
+  if (minutos <= 0) return arredondarHoras(JORNADA_BASE_PADRAO * 60);
+  return arredondarHoras(minutos);
+}
+
 export function mesAtual(): string {
   const agora = new Date();
   return `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, "0")}`;

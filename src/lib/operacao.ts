@@ -6,6 +6,8 @@ export type StatusEscala = "PREVISTO" | "NO_POSTO" | "SAIU" | "FALTA";
 export type StatusAjuste = "PENDENTE" | "APROVADO" | "RECUSADO";
 export type TipoPontoAjuste = "ENTRADA" | "SAIDA";
 
+export const JUSTIFICATIVAS_ESCALA = ["Atestado", "Falta", "Férias", "Cobertura", "Troca de turno", "Outro"] as const;
+
 export interface Escala {
   id: string;
   data: string;
@@ -15,6 +17,8 @@ export interface Escala {
   predio: string;
   local?: string | null;
   seguranca: string;
+  cobertura?: boolean;
+  justificativa?: string | null;
   created_at?: string;
   created_by?: string | null;
 }
@@ -48,7 +52,15 @@ export const HORARIOS_TURNO: Record<TurnoEscala, { entrada: string; saida: strin
 };
 
 const CHAVE_ESCALAS = "falcon_escalas";
+const CHAVE_META_ESCALA = "falcon_escalas_meta";
 const CHAVE_AJUSTES = "falcon_ajustes_ponto";
+
+export function textoObservacaoEscala(escala: Pick<Escala, "cobertura" | "justificativa">): string {
+  const partes: string[] = [];
+  if (escala.cobertura) partes.push("Cobertura");
+  if (escala.justificativa) partes.push(escala.justificativa);
+  return partes.join(" · ");
+}
 
 export function hojeISO(data = new Date()): string {
   return `${data.getFullYear()}-${String(data.getMonth() + 1).padStart(2, "0")}-${String(data.getDate()).padStart(2, "0")}`;
@@ -139,36 +151,128 @@ function gravarLocal<T>(chave: string, itens: T[]) {
   localStorage.setItem(chave, JSON.stringify(itens));
 }
 
+function lerMeta(): Record<string, Pick<Escala, "cobertura" | "justificativa">> {
+  return Object.fromEntries(
+    lerLocal<{ id: string; cobertura?: boolean; justificativa?: string | null }>(CHAVE_META_ESCALA).map((m) => [
+      m.id,
+      { cobertura: !!m.cobertura, justificativa: m.justificativa ?? null },
+    ]),
+  );
+}
+
+function gravarMeta(id: string, escala: Pick<Escala, "cobertura" | "justificativa">) {
+  const lista = lerLocal<{ id: string; cobertura?: boolean; justificativa?: string | null }>(CHAVE_META_ESCALA).filter(
+    (m) => m.id !== id,
+  );
+  lista.push({ id, cobertura: !!escala.cobertura, justificativa: escala.justificativa ?? null });
+  gravarLocal(CHAVE_META_ESCALA, lista);
+}
+
+function aplicarMeta(itens: Escala[]): Escala[] {
+  const meta = lerMeta();
+  return itens.map((e) => {
+    const extra = meta[e.id];
+    if (!extra) return e;
+    return {
+      ...e,
+      cobertura: e.cobertura ?? extra.cobertura ?? false,
+      justificativa: e.justificativa ?? extra.justificativa ?? null,
+    };
+  });
+}
+
 export async function listarEscalas(data?: string): Promise<{ itens: Escala[]; origem: "supabase" | "local" }> {
   try {
     let query = supabase.from("escalas").select("*").order("data", { ascending: true });
     if (data) query = query.eq("data", data);
     const { data: rows, error } = await query;
     if (error) throw error;
-    return { itens: (rows || []) as Escala[], origem: "supabase" };
+    return { itens: aplicarMeta((rows || []) as Escala[]), origem: "supabase" };
   } catch (err: any) {
     if (!tabelaEmFalta(err) && err?.code !== "PGRST116") {
       /* tabela existe mas falhou — ainda assim tenta o cache local */
     }
-    const local = lerLocal<Escala>(CHAVE_ESCALAS);
+    const local = aplicarMeta(lerLocal<Escala>(CHAVE_ESCALAS));
     return { itens: data ? local.filter((e) => e.data === data) : local, origem: "local" };
   }
 }
 
+export async function listarEscalasIntervalo(inicio: string, fim: string): Promise<{ itens: Escala[]; origem: "supabase" | "local" }> {
+  try {
+    const { data: rows, error } = await supabase
+      .from("escalas")
+      .select("*")
+      .gte("data", inicio)
+      .lte("data", fim)
+      .order("data", { ascending: true });
+    if (error) throw error;
+    return { itens: aplicarMeta((rows || []) as Escala[]), origem: "supabase" };
+  } catch {
+    const local = aplicarMeta(lerLocal<Escala>(CHAVE_ESCALAS)).filter((e) => e.data >= inicio && e.data <= fim);
+    return { itens: local, origem: "local" };
+  }
+}
+
+function payloadRemoto(escala: Partial<Escala>) {
+  const { cobertura: _c, justificativa: _j, ...resto } = escala;
+  return { ...resto, cobertura: escala.cobertura ?? false, justificativa: escala.justificativa ?? null };
+}
+
 export async function guardarEscala(escala: Omit<Escala, "id" | "created_at">): Promise<Escala> {
   const payload = { ...escala, id: novoId(), created_at: new Date().toISOString() };
-  const { data, error } = await supabase.from("escalas").insert([escala]).select("*").single();
-  if (!error && data) return data as Escala;
+  const { data, error } = await supabase.from("escalas").insert([payloadRemoto(escala)]).select("*").single();
+  if (!error && data) {
+    const gravada = { ...(data as Escala), cobertura: escala.cobertura, justificativa: escala.justificativa ?? null };
+    gravarMeta(gravada.id, gravada);
+    return gravada;
+  }
+  if (error && !tabelaEmFalta(error)) {
+    const semExtra = { ...payloadRemoto(escala) };
+    delete (semExtra as { cobertura?: boolean }).cobertura;
+    delete (semExtra as { justificativa?: string | null }).justificativa;
+    const retry = await supabase.from("escalas").insert([semExtra]).select("*").single();
+    if (!retry.error && retry.data) {
+      const gravada = { ...(retry.data as Escala), cobertura: escala.cobertura, justificativa: escala.justificativa ?? null };
+      gravarMeta(gravada.id, gravada);
+      return gravada;
+    }
+  }
   const lista = lerLocal<Escala>(CHAVE_ESCALAS);
   lista.push(payload);
   gravarLocal(CHAVE_ESCALAS, lista);
+  gravarMeta(payload.id, payload);
   return payload;
+}
+
+export async function atualizarEscala(id: string, escala: Omit<Escala, "id" | "created_at">): Promise<Escala> {
+  const patch = payloadRemoto(escala);
+  const { data, error } = await supabase.from("escalas").update(patch).eq("id", id).select("*").single();
+  if (!error && data) {
+    const gravada = { ...(data as Escala), cobertura: escala.cobertura, justificativa: escala.justificativa ?? null };
+    gravarMeta(id, gravada);
+    const lista = lerLocal<Escala>(CHAVE_ESCALAS).map((e) => (e.id === id ? { ...e, ...gravada } : e));
+    gravarLocal(CHAVE_ESCALAS, lista);
+    return gravada;
+  }
+  const lista = lerLocal<Escala>(CHAVE_ESCALAS);
+  const idx = lista.findIndex((e) => e.id === id);
+  const atual: Escala = { ...(idx >= 0 ? lista[idx] : { id }), ...escala, id };
+  if (idx >= 0) lista[idx] = atual;
+  else lista.push(atual);
+  gravarLocal(CHAVE_ESCALAS, lista);
+  gravarMeta(id, atual);
+  if (error && !tabelaEmFalta(error) && idx < 0) throw error;
+  return atual;
 }
 
 export async function excluirEscala(id: string): Promise<void> {
   const { error } = await supabase.from("escalas").delete().eq("id", id);
   const lista = lerLocal<Escala>(CHAVE_ESCALAS).filter((e) => e.id !== id);
   gravarLocal(CHAVE_ESCALAS, lista);
+  gravarLocal(
+    CHAVE_META_ESCALA,
+    lerLocal<{ id: string }>(CHAVE_META_ESCALA).filter((m) => m.id !== id),
+  );
   if (error && !tabelaEmFalta(error)) throw error;
 }
 

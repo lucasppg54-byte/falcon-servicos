@@ -354,18 +354,13 @@ export function FolhaPontoTab() {
               )}
             </select>
           </label>
-          <label className="block text-[12px] font-semibold text-zinc-400">
-            Competência
-            <input
-              type="month"
-              value={anoMes}
-              onChange={(e) => {
-                setAnoMes(e.target.value);
-                setVisualizado(false);
-              }}
-              className="mt-1 w-full rounded-xl bg-zinc-950 p-3 text-[14px] text-zinc-100 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500"
-            />
-          </label>
+          <SeletorCompetencia
+            anoMes={anoMes}
+            onChange={(valor) => {
+              setAnoMes(valor);
+              setVisualizado(false);
+            }}
+          />
           <label className="block text-[12px] font-semibold text-zinc-400">
             Jornada-base (h)
             <input
@@ -518,6 +513,47 @@ function MiniSelfie({ url, rotulo }: { url?: string | null | undefined; rotulo: 
     <a href={url} target="_blank" rel="noreferrer" title={`Selfie de ${rotulo}`}>
       <img src={url} alt={`Selfie de ${rotulo}`} className="size-9 rounded-full object-cover ring-1 ring-zinc-700" />
     </a>
+  );
+}
+
+const MESES_COMPETENCIA = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+
+function SeletorCompetencia({ anoMes, onChange }: { anoMes: string; onChange: (valor: string) => void }) {
+  const [anoTexto, mesTexto] = anoMes.split("-");
+  const ano = Number(anoTexto) || new Date().getFullYear();
+  const mes = Number(mesTexto) || 1;
+  function ir(proximoAno: number, proximoMes: number) {
+    const normalizado = new Date(proximoAno, proximoMes - 1, 1);
+    onChange(`${normalizado.getFullYear()}-${String(normalizado.getMonth() + 1).padStart(2, "0")}`);
+  }
+  return (
+    <div className="rounded-xl bg-zinc-950 p-3 ring-1 ring-zinc-700 sm:col-span-2">
+      <p className="text-[12px] font-semibold text-zinc-400">Competência</p>
+      <div className="mt-2 flex items-center justify-between gap-2">
+        <button type="button" onClick={() => ir(ano - 1, mes)} className="rounded-lg bg-zinc-800 px-3 py-1.5 text-[13px] font-bold text-zinc-100" aria-label="Ano anterior">
+          ‹
+        </button>
+        <span className="font-display text-[18px] font-bold text-zinc-100">{ano}</span>
+        <button type="button" onClick={() => ir(ano + 1, mes)} className="rounded-lg bg-zinc-800 px-3 py-1.5 text-[13px] font-bold text-zinc-100" aria-label="Ano seguinte">
+          ›
+        </button>
+      </div>
+      <div className="mt-2 grid grid-cols-3 gap-1.5 sm:grid-cols-4">
+        {MESES_COMPETENCIA.map((nome, indice) => {
+          const ativo = indice + 1 === mes;
+          return (
+            <button
+              key={nome}
+              type="button"
+              onClick={() => ir(ano, indice + 1)}
+              className={`rounded-lg px-2 py-1.5 text-[12px] font-semibold ${ativo ? "bg-amber-500 text-zinc-950" : "bg-zinc-900 text-zinc-300 ring-1 ring-zinc-800"}`}
+            >
+              {nome}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

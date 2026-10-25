@@ -489,28 +489,59 @@ function MainScreen({
   const [ultimasRondas, setUltimasRondas] = useState<RegistroRonda[]>([]);
 
   useEffect(() => {
+    if (!admin || tab !== "registrar") return;
+    let cancelado = false;
     async function carregarDadosDashboard() {
+      const agora = new Date();
+      const inicioMes = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, "0")}-01`;
       try {
-        const todos = await listarRegistros(100);
-        setUltimasRondas(todos);
-
-        const gravesPendentes = todos.filter(
-          (r) => r.status === "ANOMALIA" && r.gravidade === "GRAVE" && r.status_correcao === "PENDENTE"
+        const inicioIso = new Date(`${inicioMes}T00:00:00`).toISOString();
+        const [atividadesRes, ocorrenciasRes, todos] = await Promise.all([
+          supabase.from("registros_rondas").select("id", { count: "exact", head: true }).gte("created_at", inicioIso),
+          supabase.from("registros_rondas").select("id", { count: "exact", head: true }).gte("created_at", inicioIso).eq("status", "ANOMALIA"),
+          listarRegistros(100, { dataInicial: inicioMes }),
+        ]);
+        if (atividadesRes.error) throw atividadesRes.error;
+        if (ocorrenciasRes.error) throw ocorrenciasRes.error;
+        if (cancelado) return;
+        const total = atividadesRes.count ?? 0;
+        const ocorrencias = ocorrenciasRes.count ?? 0;
+        const visiveis = total === 0 ? [] : todos;
+        setUltimasRondas(visiveis);
+        setAlertasPendentes(
+          visiveis.filter((r) => r.status === "ANOMALIA" && r.gravidade === "GRAVE" && r.status_correcao === "PENDENTE"),
         );
-        setAlertasPendentes(gravesPendentes);
-        setTotalAtividadesMes(todos.length);
+        setTotalAtividadesMes(total);
+        setTotalOcorrenciasMes(total === 0 ? 0 : ocorrencias);
 
-        const anomalias = todos.filter((r) => r.status === "ANOMALIA");
-        setTotalOcorrenciasMes(anomalias.length);
-
-        const { count } = await supabase.from("segurancas").select("*", { count: "exact", head: true }).eq("ativo", true);
-        setTotalColaboradores(count || 3);
+        const { data: equipa, error: erroEquipa } = await supabase.from("segurancas").select("ativo");
+        if (erroEquipa) throw erroEquipa;
+        const ativos = (equipa ?? []).filter((pessoa) => pessoa.ativo !== false).length;
+        if (!cancelado) setTotalColaboradores(ativos);
       } catch {
-        /* ignora */
+        if (cancelado) return;
+        setUltimasRondas([]);
+        setAlertasPendentes([]);
+        setTotalAtividadesMes(0);
+        setTotalOcorrenciasMes(0);
       }
     }
-    carregarDadosDashboard();
-  }, []);
+    void carregarDadosDashboard();
+    return () => {
+      cancelado = true;
+    };
+  }, [admin, tab]);
+
+  const inicioHoje = new Date();
+  inicioHoje.setHours(0, 0, 0, 0);
+  const atividadesHoje = ultimasRondas.filter((r) => new Date(r.created_at).getTime() >= inicioHoje.getTime());
+  const realizadasHoje = atividadesHoje.filter((r) => r.status === "OK").length;
+  const pctRealizadas = atividadesHoje.length ? Math.round((realizadasHoje / atividadesHoje.length) * 100) : 0;
+  const okNoMes = ultimasRondas.filter((r) => r.status === "OK").length;
+  const cumprimento = ultimasRondas.length ? Math.round((okNoMes / ultimasRondas.length) * 100) : 0;
+  const anomaliasMes = ultimasRondas.filter((r) => r.status === "ANOMALIA");
+  const pctPendentes = anomaliasMes.length ? Math.round((alertasPendentes.length / anomaliasMes.length) * 100) : 0;
+  const pctResolvidas = anomaliasMes.length ? 100 - pctPendentes : 0;
 
   async function resolverAlerta(id: string) {
     if (!window.confirm("Confirmar que esta anomalia grave foi totalmente corrigida?")) return;
@@ -591,7 +622,7 @@ function MainScreen({
                       <p className="text-[11px] font-semibold text-indigo-300 uppercase tracking-wider sm:text-[12px]">Cumprimento Médio</p>
                       <div className="my-3 flex items-center justify-center sm:my-4">
                         <div className="relative flex size-16 items-center justify-center rounded-full bg-indigo-500/20 ring-4 ring-indigo-500/40 shadow-inner sm:size-24">
-                          <span className="font-display text-[18px] font-bold text-white sm:text-[24px]">100%</span>
+                          <span className="font-display text-[18px] font-bold text-white sm:text-[24px]">{cumprimento}%</span>
                         </div>
                       </div>
                     </div>
@@ -649,11 +680,11 @@ function MainScreen({
                   <div className="rounded-2xl bg-zinc-900 p-4 ring-1 ring-zinc-800 shadow-xl space-y-3 sm:p-6">
                     <div className="flex justify-between items-center">
                       <p className="font-display text-[15px] font-bold text-zinc-100">Atividades de Hoje</p>
-                      <span className="text-[11px] text-zinc-400 font-mono">{ultimasRondas.length} total</span>
+                      <span className="text-[11px] text-zinc-400 font-mono">{atividadesHoje.length} hoje</span>
                     </div>
                     <div className="w-full bg-zinc-950 h-3 rounded-full overflow-hidden flex ring-1 ring-zinc-800">
-                      <div className="bg-emerald-500 h-full" style={{ width: '80%' }} title="Realizadas"></div>
-                      <div className="bg-amber-500 h-full" style={{ width: '20%' }} title="Em andamento"></div>
+                      <div className="bg-emerald-500 h-full" style={{ width: `${pctRealizadas}%` }} title="Realizadas"></div>
+                      <div className="bg-amber-500 h-full" style={{ width: `${atividadesHoje.length ? 100 - pctRealizadas : 0}%` }} title="Em andamento"></div>
                     </div>
                     <div className="flex flex-wrap gap-4 text-[12px] text-zinc-400 pt-1">
                       <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-full bg-emerald-500"></span> Realizadas</span>
@@ -667,8 +698,8 @@ function MainScreen({
                       <span className="text-[11px] text-zinc-400 font-mono">{totalOcorrenciasMes} ativos</span>
                     </div>
                     <div className="w-full bg-zinc-950 h-3 rounded-full overflow-hidden flex ring-1 ring-zinc-800">
-                      <div className="bg-red-500 h-full" style={{ width: alertasPendentes.length > 0 ? '50%' : '10%' }} title="Pendentes"></div>
-                      <div className="bg-indigo-500 h-full" style={{ width: '50%' }} title="Resolvidos"></div>
+                      <div className="bg-red-500 h-full" style={{ width: `${pctPendentes}%` }} title="Pendentes"></div>
+                      <div className="bg-indigo-500 h-full" style={{ width: `${pctResolvidas}%` }} title="Resolvidos"></div>
                     </div>
                     <div className="flex flex-wrap gap-4 text-[12px] text-zinc-400 pt-1">
                       <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-full bg-red-500"></span> Em Atraso / Crítico</span>
@@ -2127,6 +2158,7 @@ function OcorrenciasTab({ seguranca, admin }: { seguranca: string; admin: boolea
   const [filtroSeguranca, setFiltroSeguranca] = useState("TODOS");
   const [listaSegurancas, setListaSegurancas] = useState<string[]>([]);
   const [busca, setBusca] = useState("");
+  const [editandoId, setEditandoId] = useState<string | null>(null);
 
   async function carregarOcorrencias() {
     setCarregando(true);
@@ -2177,16 +2209,16 @@ function OcorrenciasTab({ seguranca, admin }: { seguranca: string; admin: boolea
     setSucesso(false);
 
     try {
-      const { error } = await supabase.from("ocorricoes_plantao").insert([
-        {
-          seguranca,
-          descricao: texto.trim(),
-        },
-      ]);
+      const descricao = texto.trim();
+      const pedido = editandoId
+        ? supabase.from("ocorricoes_plantao").update({ descricao }).eq("id", editandoId).eq("seguranca", seguranca).select("id")
+        : supabase.from("ocorricoes_plantao").insert([{ seguranca, descricao }]).select("id");
+      const { data, error } = await pedido;
 
-      if (error) throw error;
+      if (error || !data?.length) throw error ?? new Error("sem linha");
 
       setTexto("");
+      setEditandoId(null);
       setSucesso(true);
       carregarOcorrencias();
     } catch {
@@ -2226,7 +2258,7 @@ function OcorrenciasTab({ seguranca, admin }: { seguranca: string; admin: boolea
     <div>
       <div className="rounded-[18px] bg-zinc-950 p-4 ring-1 ring-zinc-800 shadow-md mb-4">
         <label htmlFor="livro-ata-texto" className="block text-[12px] font-semibold uppercase tracking-[0.14em] text-zinc-300">
-          📖 Novo Registo no Livro Ata
+          {editandoId ? "✏️ A corrigir o seu registo" : "📖 Novo Registo no Livro Ata"}
         </label>
         <p className="mt-1 text-[12px] text-zinc-500">
           Registre manutenções, atendimentos, visitas de gerentes ou ocorrências relevantes do plantão.
@@ -2258,15 +2290,28 @@ function OcorrenciasTab({ seguranca, admin }: { seguranca: string; admin: boolea
         </div>
 
         {erro && <p className="mt-1.5 text-[13px] font-medium text-red-400">{erro}</p>}
-        {sucesso && <p className="mt-1.5 text-[13px] font-semibold text-emerald-400">Registrado com sucesso no Livro Ata!</p>}
+        {sucesso && <p className="mt-1.5 text-[13px] font-semibold text-emerald-400">Registo guardado no Livro Ata.</p>}
 
         <button
           onClick={enviarOcorrencia}
           disabled={enviando || texto.trim().length < 5}
           className="mt-3 w-full rounded-[14px] bg-gradient-to-r from-amber-500 to-amber-600 py-3 font-display text-[15px] font-bold text-zinc-950 shadow-md disabled:opacity-50 active:translate-y-0.5"
         >
-          {enviando ? "A salvar..." : "Assinar e Salvar no Livro Ata"}
+          {enviando ? "A salvar..." : editandoId ? "Atualizar o meu registo" : "Assinar e Salvar no Livro Ata"}
         </button>
+        {editandoId && (
+          <button
+            type="button"
+            onClick={() => {
+              setEditandoId(null);
+              setTexto("");
+              setErro("");
+            }}
+            className="mt-2 w-full rounded-[14px] bg-zinc-900 py-2.5 text-[13px] font-semibold text-zinc-300 ring-1 ring-zinc-700"
+          >
+            Cancelar edição
+          </button>
+        )}
       </div>
 
       {admin && <div className="mb-3 rounded-[14px] bg-zinc-950 p-3 ring-1 ring-zinc-800 space-y-2.5">
@@ -2381,14 +2426,31 @@ function OcorrenciasTab({ seguranca, admin }: { seguranca: string; admin: boolea
                   )}
                 </header>
                 <p className="break-words text-[14px] leading-relaxed text-zinc-300 whitespace-pre-line">{item.descricao}</p>
+                <div className="mt-2.5 flex flex-wrap gap-2">
+                {ehMeu && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditandoId(item.id);
+                      setTexto(item.descricao);
+                      setErro("");
+                      setSucesso(false);
+                      document.getElementById("livro-ata-texto")?.scrollIntoView({ behavior: "smooth", block: "center" });
+                    }}
+                    className="rounded-[8px] bg-amber-500/15 px-2.5 py-1 text-[11px] font-semibold text-amber-300 ring-1 ring-amber-500/30"
+                  >
+                    Editar o meu texto
+                  </button>
+                )}
                 {admin && (
                   <button
                     onClick={() => excluirOcorrencia(item.id)}
-                    className="mt-2.5 flex items-center gap-1.5 rounded-[8px] bg-red-950 px-2.5 py-1 text-[11px] font-semibold text-red-400 ring-1 ring-red-500/30"
+                    className="flex items-center gap-1.5 rounded-[8px] bg-red-950 px-2.5 py-1 text-[11px] font-semibold text-red-400 ring-1 ring-red-500/30"
                   >
                     <Trash2 className="size-3.5" /> Excluir registo
                   </button>
                 )}
+                </div>
               </article>
             );
           })}

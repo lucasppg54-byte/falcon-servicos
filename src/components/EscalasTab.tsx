@@ -200,33 +200,45 @@ export function EscalasTab({ gestor }: { gestor: string }) {
     const linhas = escalasMes
       .filter((e) => (filtroCliente === "TODOS" ? true : e.predio === filtroCliente))
       .sort((a, b) => a.data.localeCompare(b.data) || a.seguranca.localeCompare(b.seguranca));
-    const corpo = linhas
-      .map(
-        (e) => `<tr>
+    const grupos = new Map<string, typeof linhas>();
+    for (const linha of linhas) {
+      const chave = linha.predio || "Sem posto";
+      grupos.set(chave, [...(grupos.get(chave) ?? []), linha]);
+    }
+    const corpo = [...grupos.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0], "pt"))
+      .map(([empresa, itens]) => {
+        const filas = itens
+          .map(
+            (e) => `<tr>
           <td>${new Date(`${e.data}T12:00:00`).toLocaleDateString("pt-BR")}</td>
           <td>${e.seguranca}</td>
-          <td>${e.predio}</td>
           <td>${e.turno === "DIURNO" ? "Diurno" : "Noturno"}</td>
           <td>${e.hora_entrada}–${e.hora_saida}</td>
           <td>${e.cobertura ? "Sim" : "Não"}</td>
           <td>${e.justificativa || "—"}</td>
         </tr>`,
-      )
+          )
+          .join("");
+        return `<section><h2>${empresa}</h2><p>${itens.length} escala(s)</p>
+        <table><thead><tr><th>Data</th><th>Colaborador</th><th>Turno</th><th>Horário</th><th>Cobertura</th><th>Justificativa</th></tr></thead>
+        <tbody>${filas}</tbody></table></section>`;
+      })
       .join("");
     const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8" /><title>Escala — ${posto}</title>
       <style>
         body { font-family: Arial, sans-serif; color: #1c1a17; margin: 28px; }
         h1 { font-size: 22px; margin: 0; }
+        h2 { font-size: 16px; margin: 22px 0 4px; padding-top: 10px; border-top: 2px solid #1c1a17; }
         p { color: #5a544c; }
-        table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+        table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-bottom: 8px; }
         th, td { border: 1px solid #d9d2c6; padding: 8px; text-align: left; }
         th { background: #1c1a17; color: #fff; }
         @media print { .no-print { display: none; } }
       </style></head><body>
       <h1>Falcon Serviços — Relatório de Escalas</h1>
-      <p>${posto} · competência ${mes}</p>
-      <table><thead><tr><th>Data</th><th>Colaborador</th><th>Posto</th><th>Turno</th><th>Horário</th><th>Cobertura</th><th>Justificativa</th></tr></thead>
-      <tbody>${corpo || `<tr><td colspan="7">Sem escalas neste recorte.</td></tr>`}</tbody></table>
+      <p>${posto} · competência ${mes} · ${grupos.size} posto(s)</p>
+      ${corpo || `<p>Sem escalas neste recorte.</p>`}
       <p>Gerado em ${new Date().toLocaleString("pt-BR")} por ${gestor}.</p>
       <div class="no-print"><button onclick="window.print()">Imprimir / Salvar PDF</button></div>
       </body></html>`;

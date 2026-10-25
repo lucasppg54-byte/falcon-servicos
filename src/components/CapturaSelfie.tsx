@@ -117,27 +117,6 @@ export function CapturaSelfie({
             Tirar outra
           </button>
         )}
-        <label className="cursor-pointer rounded-lg bg-zinc-800 px-3 py-2 text-[12px] font-semibold text-zinc-100">
-          {preview ? "Substituir ficheiro" : "Câmara / ficheiro"}
-          <input
-            type="file"
-            accept="image/*"
-            capture="user"
-            className="hidden"
-            disabled={disabled}
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              e.target.value = "";
-              if (!file) return;
-              if (preview) URL.revokeObjectURL(preview);
-              streamRef.current?.getTracks().forEach((t) => t.stop());
-              setACapturar(false);
-              setPreview(URL.createObjectURL(file));
-              setErro("");
-              onCapturar(file);
-            }}
-          />
-        </label>
       </div>
       {erro && <p className="text-[12px] text-red-400">{erro}</p>}
     </div>

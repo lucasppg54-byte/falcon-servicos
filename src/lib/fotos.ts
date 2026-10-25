@@ -22,6 +22,30 @@ function extensaoDe(file: { type: string; name: string }): string {
   return doTipo ? doTipo.replace("jpeg", "jpg").toLowerCase() : "jpg";
 }
 
+export function ehUrlSelfiePonto(url: string): boolean {
+  return /\/ponto\//.test(url);
+}
+
+export function fotosVisiveis(fotoUrl: string | null | undefined, podeVerSelfie: boolean): string[] {
+  const urls = extrairFotos(fotoUrl);
+  if (podeVerSelfie) return urls;
+  return urls.filter((u) => !ehUrlSelfiePonto(u));
+}
+
+export function gerarCaminhoSelfiePonto(file: { type: string; name: string }, seguranca: string, agora = new Date()): string {
+  const dia = agora.toISOString().slice(0, 10);
+  const quem = seguranca
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 40) || "colaborador";
+  const aleatorio = Math.random().toString(36).substring(2, 8);
+  return `ponto/${dia}/${quem}-${agora.getTime()}-${aleatorio}.${extensaoDe(file)}`;
+}
+
 export function gerarCaminhoFoto(file: { type: string; name: string }, agora = new Date(), indice = 0): string {
   const dia = agora.toISOString().slice(0, 10);
   const aleatorio = Math.random().toString(36).substring(2, 9);

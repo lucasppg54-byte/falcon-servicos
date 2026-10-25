@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { caminhoNoBucket, extrairFotos, gerarCaminhoFoto, nomeFicheiroGaleria, serializarFotos } from "@/lib/fotos";
+import {
+  caminhoNoBucket,
+  ehUrlSelfiePonto,
+  extrairFotos,
+  fotosVisiveis,
+  gerarCaminhoFoto,
+  gerarCaminhoSelfiePonto,
+  nomeFicheiroGaleria,
+  serializarFotos,
+} from "@/lib/fotos";
 import { ehMarcacaoPlantao, podeExcluirRegistro } from "@/lib/marcacoes";
 
 const BASE = "https://abc.supabase.co/storage/v1/object/public/rondas/";
@@ -37,6 +46,23 @@ describe("caminhos no bucket rondas", () => {
     expect(caminhoNoBucket("https://outro.site/foto.jpg")).toBeNull();
   });
 
+  it("guarda a selfie de ponto na pasta ponto/ com o dia e o vigilante", () => {
+    const caminho = gerarCaminhoSelfiePonto(
+      { name: "selfie.jpg", type: "image/jpeg" },
+      "Lucas Silva",
+      new Date("2026-10-17T12:00:00.000Z"),
+    );
+    expect(caminho).toMatch(/^ponto\/2026-10-17\/lucas-silva-\d+-[a-z0-9]+\.jpg$/);
+  });
+
+  it("esconde selfies de ponto de quem não é o colaborador nem gestor", () => {
+    const selfie = `${BASE}ponto/2026-10-17/lucas.jpg`;
+    const anomalia = `${BASE}anomalias/2026-10-17/x.jpg`;
+    expect(ehUrlSelfiePonto(selfie)).toBe(true);
+    expect(fotosVisiveis(`${selfie}\n${anomalia}`, false)).toEqual([anomalia]);
+    expect(fotosVisiveis(`${selfie}\n${anomalia}`, true)).toEqual([selfie, anomalia]);
+  });
+
   it("nomeia a cópia da galeria de forma legível", () => {
     const nome = nomeFicheiroGaleria({ name: "image.jpg", type: "image/jpeg" }, new Date("2026-10-12T09:05:07Z"), 0);
     expect(nome).toBe("falcon_20261012_090507_1.jpg");
@@ -49,6 +75,7 @@ describe("exclusão de registos pelo vigilante", () => {
   it("identifica marcações de início e fim de plantão", () => {
     expect(ehMarcacaoPlantao("🚀 NOVO PLANTÃO PJ INICIADO na Base por João")).toBe(true);
     expect(ehMarcacaoPlantao("🏁 PLANTÃO FINALIZADO COM 0 PENDÊNCIAS.")).toBe(true);
+    expect(ehMarcacaoPlantao("⏱️ PONTO ENTRADA em Dream Park — Portaria")).toBe(true);
     expect(ehMarcacaoPlantao("Vazamento na casa de máquinas")).toBe(false);
     expect(ehMarcacaoPlantao(null)).toBe(false);
   });

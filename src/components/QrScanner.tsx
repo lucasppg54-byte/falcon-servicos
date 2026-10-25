@@ -40,6 +40,10 @@ export function QrScanner({
   onDetectRef.current = onDetect;
 
   useEffect(() => {
+    if (disabled && cameraAtiva) setCameraAtiva(false);
+  }, [disabled, cameraAtiva]);
+
+  useEffect(() => {
     if (!cameraAtiva) return;
     let cancelado = false;
     let intervalo: ReturnType<typeof setInterval> | undefined;
@@ -168,8 +172,9 @@ export function QrScanner({
               </p>
               {!erroCamera && (
                 <button
+                  disabled={disabled}
                   onClick={() => setCameraAtiva(true)}
-                  className="mt-4 rounded-[12px] bg-gradient-to-r from-amber-500 to-amber-600 px-6 py-3 font-display text-[14px] font-bold text-zinc-950 shadow-md active:translate-y-0.5"
+                  className="mt-4 rounded-[12px] bg-gradient-to-r from-amber-500 to-amber-600 px-6 py-3 font-display text-[14px] font-bold text-zinc-950 shadow-md active:translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Ativar câmera
                 </button>

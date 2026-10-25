@@ -2,32 +2,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { BUCKET_FOTOS, caminhoNoBucket, extrairFotos, gerarCaminhoFoto, serializarFotos } from "@/lib/fotos";
 import { podeExcluirRegistro } from "@/lib/marcacoes";
 
-const ADMIN_SEGURANCAS_PADRAO = ["Falcon (Admin)"];
-
-function normalizarNome(nome: string): string {
-  return nome
-    .trim()
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
-}
-
-export function ehAdminSeguranca(nome: string): boolean {
-  if (!nome) return false;
-  const alvo = normalizarNome(nome);
-  
-  if (alvo.includes("falcon (admin)") || alvo.includes("administrador") || alvo.includes("mauro")) {
-    return true;
-  }
-
-  const env = import.meta.env["VITE_ADMIN_SEGURANCAS"] as string | undefined;
-  const lista = (env ?? ADMIN_SEGURANCAS_PADRAO.join(","))
-    .split(",")
-    .map((n) => normalizarNome(n))
-    .filter(Boolean);
-    
-  return lista.some((admin) => alvo.includes(admin));
-}
+export { ehAdminSeguranca, rotuloGestor } from "@/lib/perfis";
 
 export interface LocalRonda {
   id: string;

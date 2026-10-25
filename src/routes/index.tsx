@@ -9,15 +9,24 @@ import {
   normalizarCodigoQr,
   registrarRonda,
   marcarComoCorrigido,
+  rotuloGestor,
   type LocalRonda,
   type RegistroRonda,
 } from "@/lib/rondas";
-import { extrairFotos } from "@/lib/fotos";
+import { CARGOS_EQUIPA, perfilAPartirDoCargo } from "@/lib/perfis";
+import { gerarPinAcesso } from "@/lib/pin";
+import { empresaExistente } from "@/lib/empresas";
+import { fotosVisiveis } from "@/lib/fotos";
 import { ehIos, gravarPreferenciaGaleria, guardarNaGaleria, lerPreferenciaGaleria } from "@/lib/galeria";
 import { ehMarcacaoPlantao, podeExcluirRegistro } from "@/lib/marcacoes";
 import { baixarQrPng, gerarProximoCodigo } from "@/lib/qr";
 import { QrScanner } from "@/components/QrScanner";
 import { LocaisQrSection, QrPreview } from "@/components/LocaisQrSection";
+import { FolhaPontoTab } from "@/components/FolhaPontoTab";
+import { EscalasTab } from "@/components/EscalasTab";
+import { AjustesPontoTab } from "@/components/AjustesPontoTab";
+import { BaterPontoPanel } from "@/components/BaterPontoPanel";
+import { IndicadorSincronizacao } from "@/components/IndicadorSincronizacao";
 import { supabase } from "@/integrations/supabase/client";
 
 export const Route = createFileRoute("/")({
@@ -48,15 +57,17 @@ export const Route = createFileRoute("/")({
   component: RondaApp,
 });
 
-type Tab = "registrar" | "checklist" | "historico" | "ocorrencias" | "financeiro" | "admin";
+type Tab = "registrar" | "checklist" | "historico" | "ocorrencias" | "financeiro" | "ponto" | "escalas" | "ajustes" | "admin";
+
+function lerSessao(chave: string) {
+  return typeof window !== "undefined" ? (localStorage.getItem(chave) ?? "") : "";
+}
 
 function RondaApp() {
-  const [seguranca, setSeguranca] = useState<string>(() =>
-    typeof window !== "undefined" ? (localStorage.getItem("seguranca_nome") ?? "") : "",
-  );
-  const [postoAtribuido, setPostoAtribuido] = useState<string>(() =>
-    typeof window !== "undefined" ? (localStorage.getItem("seguranca_posto") ?? "") : "",
-  );
+  const [seguranca, setSeguranca] = useState<string>(() => lerSessao("seguranca_nome"));
+  const [postoAtribuido, setPostoAtribuido] = useState<string>(() => lerSessao("seguranca_posto"));
+  const [cargoSessao, setCargoSessao] = useState<string>(() => lerSessao("seguranca_cargo"));
+  const [perfilSessao, setPerfilSessao] = useState<string>(() => lerSessao("seguranca_perfil"));
   const [isCobertura, setIsCobertura] = useState<boolean>(() =>
     typeof window !== "undefined" ? localStorage.getItem("seguranca_cobertura") === "true" : false,
   );
@@ -64,28 +75,38 @@ function RondaApp() {
   if (!seguranca) {
     return (
       <LoginScreen
-        onEntrar={(nome, posto, cobertura) => {
+        onEntrar={(nome, posto, cobertura, cargo, perfil) => {
           setSeguranca(nome);
           setPostoAtribuido(posto);
+          setCargoSessao(cargo);
+          setPerfilSessao(perfil);
           setIsCobertura(cobertura);
         }}
       />
     );
   }
 
+  const admin = ehAdminSeguranca(seguranca, cargoSessao, perfilSessao);
+  const rotulo = rotuloGestor(seguranca, cargoSessao, perfilSessao) ?? "Admin";
+
   return (
     <MainScreen
       seguranca={seguranca}
       postoAtribuido={postoAtribuido}
       isCobertura={isCobertura}
-      admin={ehAdminSeguranca(seguranca)}
+      admin={admin}
+      rotuloGestor={rotulo}
       onTrocar={() => {
         localStorage.removeItem("seguranca_nome");
         localStorage.removeItem("seguranca_posto");
         localStorage.removeItem("seguranca_cobertura");
         localStorage.removeItem("seguranca_contrato");
+        localStorage.removeItem("seguranca_cargo");
+        localStorage.removeItem("seguranca_perfil");
         setSeguranca("");
         setPostoAtribuido("");
+        setCargoSessao("");
+        setPerfilSessao("");
         setIsCobertura(false);
       }}
     />
@@ -102,9 +123,15 @@ interface SegurancaDb {
   ativo: boolean;
   pin: string;
   posto_atribuido?: string | null;
+  perfil?: string | null;
+  valor_hora_extra?: number | null;
 }
 
-function LoginScreen({ onEntrar }: { onEntrar: (nome: string, posto: string, cobertura: boolean) => void }) {
+function LoginScreen({
+  onEntrar,
+}: {
+  onEntrar: (nome: string, posto: string, cobertura: boolean, cargo: string, perfil: string) => void;
+}) {
   const [postosDisponiveis, setPostosDisponiveis] = useState<string[]>([]);
   const [postoSelecionado, setPostoSelecionado] = useState("");
   
@@ -133,8 +160,9 @@ function LoginScreen({ onEntrar }: { onEntrar: (nome: string, posto: string, cob
           .eq("ativo", true)
           .order("nome", { ascending: true });
 
-        const segsLista = segs || [];
-        const temAdmin = segsLista.some((b) => b.nome.toLowerCase().includes("falcon"));
+        const segsLista = (segs || []) as SegurancaDb[];
+        const temAdmin = segsLista.some((b) => ehAdminSeguranca(b.nome, b.cargo, b.perfil) && !b.cargo?.toLowerCase().includes("supervisor"));
+        const temSupervisor = segsLista.some((b) => ehAdminSeguranca(b.nome, b.cargo, b.perfil) && b.cargo?.toLowerCase().includes("supervisor"));
         let listaFinal = segsLista;
         if (!temAdmin) {
           listaFinal = [
@@ -146,8 +174,24 @@ function LoginScreen({ onEntrar }: { onEntrar: (nome: string, posto: string, cob
               ativo: true,
               pin: "1234",
               posto_atribuido: "Geral",
+              perfil: "admin",
             },
-            ...segsLista,
+            ...listaFinal,
+          ];
+        }
+        if (!temSupervisor) {
+          listaFinal = [
+            {
+              id: "supervisor-falcon-id",
+              nome: "Supervisor Falcon",
+              cargo: "Supervisor",
+              tipo_contrato: "PJ",
+              ativo: true,
+              pin: "5678",
+              posto_atribuido: "Geral",
+              perfil: "supervisor",
+            },
+            ...listaFinal,
           ];
         }
 
@@ -166,7 +210,7 @@ function LoginScreen({ onEntrar }: { onEntrar: (nome: string, posto: string, cob
   }, []);
 
   const segurancasFiltrados = todosSegurancas.filter((b) => {
-    if (b.nome.toLowerCase().includes("falcon")) return true;
+    if (ehAdminSeguranca(b.nome, b.cargo, b.perfil)) return true;
     if (modoCobertura) return true;
     if (!b.posto_atribuido) return true;
 
@@ -196,8 +240,9 @@ function LoginScreen({ onEntrar }: { onEntrar: (nome: string, posto: string, cob
       return;
     }
 
+    const gestor = ehAdminSeguranca(segurancaAtual.nome, segurancaAtual.cargo, segurancaAtual.perfil);
     const contratoCadastrado = (segurancaAtual.tipo_contrato || "CLT").toUpperCase();
-    if (!nomeSelecionado.toLowerCase().includes("falcon") && contratoCadastrado !== tipoContrato) {
+    if (!gestor && contratoCadastrado !== tipoContrato) {
       setErro(`⚠️ Tipo de contrato incorreto. O colaborador ${segurancaAtual.nome} está cadastrado como ${contratoCadastrado}.`);
       return;
     }
@@ -207,14 +252,16 @@ function LoginScreen({ onEntrar }: { onEntrar: (nome: string, posto: string, cob
       return;
     }
 
-    const isAdmin = nomeSelecionado.toLowerCase().includes("falcon");
-    const postoFinal = isAdmin ? "Geral" : postoSelecionado;
+    const postoFinal = gestor ? "Geral" : postoSelecionado;
+    const perfil = segurancaAtual.perfil || perfilAPartirDoCargo(segurancaAtual.cargo);
 
     localStorage.setItem("seguranca_nome", segurancaAtual.nome);
     localStorage.setItem("seguranca_posto", postoFinal);
     localStorage.setItem("seguranca_cobertura", modoCobertura ? "true" : "false");
     localStorage.setItem("seguranca_contrato", contratoCadastrado);
-    onEntrar(segurancaAtual.nome, postoFinal, modoCobertura);
+    localStorage.setItem("seguranca_cargo", segurancaAtual.cargo || "");
+    localStorage.setItem("seguranca_perfil", perfil);
+    onEntrar(segurancaAtual.nome, postoFinal, modoCobertura, segurancaAtual.cargo || "", perfil);
   }
 
   return (
@@ -424,12 +471,14 @@ function MainScreen({
   postoAtribuido,
   isCobertura,
   admin,
+  rotuloGestor: rotulo,
   onTrocar,
 }: {
   seguranca: string;
   postoAtribuido: string;
   isCobertura: boolean;
   admin: boolean;
+  rotuloGestor: "Admin" | "Supervisor";
   onTrocar: () => void;
 }) {
   const [tab, setTab] = useState<Tab>("registrar");
@@ -484,7 +533,7 @@ function MainScreen({
             </div>
             <div className="min-w-0 leading-tight">
               <p className="truncate font-display text-[15px] font-bold text-zinc-100 sm:text-[18px]">
-                Falcon Serviços <span className="hidden sm:inline">— Centro de Comando (Admin)</span>
+                Falcon Serviços <span className="hidden sm:inline">— Centro de Comando ({rotulo})</span>
               </p>
               <p className="truncate text-[10px] uppercase tracking-[0.16em] text-amber-400 font-semibold sm:text-[11px] sm:tracking-[0.18em]">
                 <span className="sm:hidden">Centro de Comando</span>
@@ -493,13 +542,7 @@ function MainScreen({
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2 sm:gap-4">
-            <div
-              className="flex items-center gap-2 rounded-full bg-zinc-900 p-2 border border-zinc-800 sm:px-3.5 sm:py-1.5"
-              title="Sistema Online (Supabase)"
-            >
-              <span className="size-2.5 rounded-full bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.2)]"></span>
-              <span className="hidden text-[11px] font-semibold text-emerald-400 uppercase sm:inline">Sistema Online (Supabase)</span>
-            </div>
+            <IndicadorSincronizacao />
             <button
               onClick={onTrocar}
               className="rounded-lg bg-zinc-900 px-3 py-1.5 text-[12px] font-semibold text-zinc-300 ring-1 ring-zinc-700 hover:bg-zinc-800 sm:rounded-xl sm:px-4 sm:py-2"
@@ -523,6 +566,15 @@ function MainScreen({
             </TabButton>
             <TabButton variant="scroll" active={tab === "financeiro"} onClick={() => setTab("financeiro")}>
               💰 Financeiro PJ
+            </TabButton>
+            <TabButton variant="scroll" active={tab === "ponto"} onClick={() => setTab("ponto")}>
+              🕒 Folha de Ponto
+            </TabButton>
+            <TabButton variant="scroll" active={tab === "escalas"} onClick={() => setTab("escalas")}>
+              📅 Escalas
+            </TabButton>
+            <TabButton variant="scroll" active={tab === "ajustes"} onClick={() => setTab("ajustes")}>
+              ✍️ Ajustes
             </TabButton>
             <TabButton variant="scroll" active={tab === "admin"} onClick={() => setTab("admin")}>
               ⚙️ Postos & Equipa
@@ -673,6 +725,9 @@ function MainScreen({
             {tab === "historico" && <HistoricoTab admin={admin} segurancaAtual={seguranca} />}
             {tab === "ocorrencias" && <OcorrenciasTab seguranca={seguranca} admin={admin} />}
             {tab === "financeiro" && <FinanceiroPjTab />}
+            {tab === "ponto" && <FolhaPontoTab />}
+            {tab === "escalas" && <EscalasTab gestor={seguranca} />}
+            {tab === "ajustes" && <AjustesPontoTab seguranca={seguranca} admin={admin} />}
             {tab === "admin" && <AdminTab />}
           </div>
         </div>
@@ -695,10 +750,22 @@ function MainScreen({
         <TabButton variant="grid" active={tab === "ocorrencias"} onClick={() => setTab("ocorrencias")}>
           Livro Ata
         </TabButton>
+        <TabButton variant="grid" active={tab === "ajustes"} onClick={() => setTab("ajustes")}>
+          Ajustes
+        </TabButton>
         {admin && (
           <>
             <TabButton variant="grid" active={tab === "financeiro"} onClick={() => setTab("financeiro")}>
               💰 PJ
+            </TabButton>
+            <TabButton variant="grid" active={tab === "ponto"} onClick={() => setTab("ponto")}>
+              🕒 Ponto
+            </TabButton>
+            <TabButton variant="grid" active={tab === "escalas"} onClick={() => setTab("escalas")}>
+              📅 Escalas
+            </TabButton>
+            <TabButton variant="grid" active={tab === "ajustes"} onClick={() => setTab("ajustes")}>
+              ✍️ Ajustes
             </TabButton>
             <TabButton variant="grid" active={tab === "admin"} onClick={() => setTab("admin")}>
               ⚙️ Admin
@@ -758,9 +825,10 @@ function MainScreen({
           </div>
           {admin && (
             <span className="rounded-md bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-400 shrink-0">
-              Admin
+              {rotulo}
             </span>
           )}
+          <IndicadorSincronizacao />
           <button
             onClick={onTrocar}
             className="ml-auto text-[12px] font-semibold text-zinc-500 underline underline-offset-2 shrink-0"
@@ -777,8 +845,14 @@ function MainScreen({
           <HistoricoTab admin={admin} segurancaAtual={seguranca} />
         ) : tab === "ocorrencias" ? (
           <OcorrenciasTab seguranca={seguranca} admin={admin} />
+        ) : tab === "ajustes" ? (
+          <AjustesPontoTab seguranca={seguranca} admin={admin} />
         ) : tab === "financeiro" ? (
           <FinanceiroPjTab />
+        ) : tab === "ponto" ? (
+          <FolhaPontoTab />
+        ) : tab === "escalas" ? (
+          <EscalasTab gestor={seguranca} />
         ) : (
           <AdminTab />
         )}
@@ -1068,6 +1142,9 @@ function RegistrarTab({ seguranca, postoAtribuido, isCobertura, admin }: { segur
 
   return (
     <>
+      <BaterPontoPanel seguranca={seguranca} />
+
+      <p className="mt-2 px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">Ronda do posto</p>
       <QrScanner onDetect={(val) => consultar(val, false)} disabled={buscando} />
 
       <div className="mt-4">
@@ -1857,7 +1934,7 @@ function HistoricoTab({ admin, segurancaAtual }: { admin: boolean; segurancaAtua
           </div>
 
           <button
-            onClick={() => gerarRelatorio(registrosFiltrados, filtroPosto)}
+            onClick={() => gerarRelatorio(registrosFiltrados, filtroPosto, { admin, segurancaAtual })}
             disabled={carregando || registrosFiltrados.length === 0}
             className="w-full rounded-[12px] bg-gradient-to-r from-amber-500 to-amber-600 py-3 font-display text-[13px] font-semibold tracking-wide text-zinc-950 shadow-md disabled:opacity-50 active:translate-y-0.5"
           >
@@ -1959,7 +2036,7 @@ function HistoricoTab({ admin, segurancaAtual }: { admin: boolean; segurancaAtua
                 </p>
               )}
 
-              <FotosRegistro fotoUrl={r.foto_url} />
+              <FotosRegistro fotoUrl={r.foto_url} podeVerSelfie={admin || r.seguranca === segurancaAtual} />
 
               {r.latitude && r.longitude && (
                 <div className="mt-2 flex items-center justify-between border-t border-zinc-800 pt-1.5 text-[11px] text-zinc-400">
@@ -2004,8 +2081,8 @@ function HistoricoTab({ admin, segurancaAtual }: { admin: boolean; segurancaAtua
   );
 }
 
-function FotosRegistro({ fotoUrl }: { fotoUrl: string | null }) {
-  const fotos = extrairFotos(fotoUrl);
+function FotosRegistro({ fotoUrl, podeVerSelfie = false }: { fotoUrl: string | null; podeVerSelfie?: boolean }) {
+  const fotos = fotosVisiveis(fotoUrl, podeVerSelfie);
   if (fotos.length === 0) return null;
   return (
     <div className="mt-2.5">
@@ -2423,7 +2500,11 @@ function gerarRelatorioLivroAta(registros: OcorrenciaItem[]) {
 
 /* ---------------- Relatório de Rondas com GPS / Google Maps, Fotos e Nome do Cliente em Destaque ---------------- */
 
-function gerarRelatorio(registros: RegistroRonda[], posto: string) {
+function gerarRelatorio(
+  registros: RegistroRonda[],
+  posto: string,
+  acesso: { admin: boolean; segurancaAtual: string },
+) {
   if (registros.length === 0) return;
   const geradoEm = new Date().toLocaleString("pt-BR");
   const tituloPosto = posto !== "TODOS" ? `Posto / Cliente: ${escapeHtml(posto)}` : "Todos os Postos / Clientes";
@@ -2450,7 +2531,7 @@ function gerarRelatorio(registros: RegistroRonda[], posto: string) {
         ? `<br><a href="https://maps.google.com/?q=${r.latitude},${r.longitude}" target="_blank" style="color:#0f52ba;font-size:11px;font-weight:600">📍 Ver no Google Maps</a>` 
         : "";
 
-      const fotos = extrairFotos(r.foto_url);
+      const fotos = fotosVisiveis(r.foto_url, acesso.admin || r.seguranca === acesso.segurancaAtual);
       const fotoInfo = fotos.length > 0
         ? `<br><div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px;">${fotos
             .map((url) => `<a href="${escapeHtml(url)}" target="_blank"><img src="${escapeHtml(url)}" alt="Foto" style="max-width:120px;max-height:120px;border-radius:6px;border:1px solid #d9d2c6;" /></a>`)
@@ -2627,6 +2708,7 @@ function AdminTab() {
   // Estados de Cadastro / Edição de Local (Posto)
   const [editandoLocalId, setEditandoLocalId] = useState<string | null>(null);
   const [predio, setPredio] = useState("");
+  const [empresaNova, setEmpresaNova] = useState(false);
   const [localNome, setLocalNome] = useState("");
   const [qrHash, setQrHash] = useState("");
   // Enquanto o código não for editado à mão, é gerado a partir do nome do prédio (ex.: samambaia-02).
@@ -2639,7 +2721,7 @@ function AdminTab() {
   const [nomeSeg, setNomeSeg] = useState("");
   const [cargoSeg, setCargoSeg] = useState("Segurança");
   const [tipoContratoSeg, setTipoContratoSeg] = useState("PJ");
-  const [pinSeg, setPinSeg] = useState("");
+  const [pinSeg, setPinSeg] = useState(() => gerarPinAcesso());
   const [postosSelecionados, setTodosPostosSelecionados] = useState<string[]>([]);
   const [salvandoSeg, setSalvandoSeg] = useState(false);
 
@@ -2675,6 +2757,7 @@ function AdminTab() {
   function prepararEdicaoLocal(loc: LocalRonda) {
     setEditandoLocalId(loc.id);
     setPredio(loc.predio);
+    setEmpresaNova(!listaPostosDisponiveis.includes(loc.predio));
     setLocalNome(loc.local);
     setQrHash(loc.qr_code_hash);
     setQrManual(true);
@@ -2684,6 +2767,7 @@ function AdminTab() {
   function cancelarEdicaoLocal() {
     setEditandoLocalId(null);
     setPredio("");
+    setEmpresaNova(listaPostosDisponiveis.length === 0);
     setLocalNome("");
     setQrHash("");
     setQrManual(false);
@@ -2691,7 +2775,9 @@ function AdminTab() {
 
   async function salvarLocal(e: React.FormEvent) {
     e.preventDefault();
-    if (!predio.trim() || !localNome.trim() || !qrEfetivo) {
+    const nomeDigitado = predio.trim();
+    const predioCanonico = empresaExistente(nomeDigitado, listaPostosDisponiveis) || nomeDigitado;
+    if (!predioCanonico || !localNome.trim() || !qrEfetivo) {
       window.alert("Preencha todos os campos do local de ronda.");
       return;
     }
@@ -2701,7 +2787,7 @@ function AdminTab() {
         const { error } = await supabase
           .from("locais_ronda")
           .update({
-            predio: predio.trim(),
+            predio: predioCanonico,
             local: localNome.trim(),
             qr_code_hash: qrEfetivo,
           })
@@ -2712,7 +2798,7 @@ function AdminTab() {
       } else {
         const { error } = await supabase.from("locais_ronda").insert([
           {
-            predio: predio.trim(),
+            predio: predioCanonico,
             local: localNome.trim(),
             qr_code_hash: qrEfetivo,
           },
@@ -2752,7 +2838,7 @@ function AdminTab() {
     setNomeSeg(seg.nome);
     setCargoSeg(seg.cargo || "Segurança");
     setTipoContratoSeg(seg.tipo_contrato || "PJ");
-    setPinSeg(seg.pin);
+    setPinSeg(seg.pin || gerarPinAcesso());
     
     if (seg.posto_atribuido) {
       const postosArray = seg.posto_atribuido.split(",").map((p) => p.trim());
@@ -2767,47 +2853,48 @@ function AdminTab() {
     setNomeSeg("");
     setCargoSeg("Segurança");
     setTipoContratoSeg("PJ");
-    setPinSeg("");
+    setPinSeg(gerarPinAcesso(segurancas.map((s) => s.pin)));
     setTodosPostosSelecionados([]);
   }
 
   async function salvarSeguranca(e: React.FormEvent) {
     e.preventDefault();
-    if (!nomeSeg.trim() || !pinSeg.trim()) {
-      window.alert("Preencha o nome e o PIN do segurança.");
+    const pinFinal = pinSeg.trim() || gerarPinAcesso(segurancas.map((s) => s.pin));
+    if (!nomeSeg.trim()) {
+      window.alert("Preencha o nome do segurança.");
       return;
     }
     setSalvandoSeg(true);
     try {
       const postoFinalStr = postosSelecionados.length > 0 ? postosSelecionados.join(", ") : "Geral";
+      const perfil = perfilAPartirDoCargo(cargoSeg);
+      const payload = {
+        nome: nomeSeg.trim(),
+        cargo: cargoSeg.trim(),
+        tipo_contrato: tipoContratoSeg.trim(),
+        pin: pinFinal,
+        posto_atribuido: postoFinalStr,
+        perfil,
+      };
 
       if (editandoSegId) {
-        const { error } = await supabase
-          .from("segurancas")
-          .update({
-            nome: nomeSeg.trim(),
-            cargo: cargoSeg.trim(),
-            tipo_contrato: tipoContratoSeg.trim(),
-            pin: pinSeg.trim(),
-            posto_atribuido: postoFinalStr,
-          })
-          .eq("id", editandoSegId);
-
-        if (error) throw error;
-        window.alert("Segurança atualizado com sucesso!");
+        let { error } = await supabase.from("segurancas").update(payload).eq("id", editandoSegId);
+        if (error) {
+          const semPerfil = { ...payload, perfil: undefined };
+          delete (semPerfil as { perfil?: string }).perfil;
+          const retry = await supabase.from("segurancas").update(semPerfil).eq("id", editandoSegId);
+          if (retry.error) throw retry.error;
+        }
+        window.alert(`Segurança atualizado. PIN de acesso: ${pinFinal}`);
       } else {
-        const { error } = await supabase.from("segurancas").insert([
-          {
-            nome: nomeSeg.trim(),
-            cargo: cargoSeg.trim(),
-            tipo_contrato: tipoContratoSeg.trim(),
-            pin: pinSeg.trim(),
-            posto_atribuido: postoFinalStr,
-            ativo: true,
-          },
-        ]);
-        if (error) throw error;
-        window.alert("Segurança cadastrado com sucesso!");
+        let { error } = await supabase.from("segurancas").insert([{ ...payload, ativo: true }]);
+        if (error) {
+          const semPerfil = { ...payload, perfil: undefined };
+          delete (semPerfil as { perfil?: string }).perfil;
+          const retry = await supabase.from("segurancas").insert([{ ...semPerfil, ativo: true }]);
+          if (retry.error) throw retry.error;
+        }
+        window.alert(`Segurança cadastrado com sucesso.\nPIN de acesso: ${pinFinal}`);
       }
 
       cancelarEdicaoSeguranca();
@@ -2867,14 +2954,51 @@ function AdminTab() {
 
             <form onSubmit={salvarLocal} className="space-y-4">
               <div>
-                <label className="block text-[12px] font-semibold text-zinc-400 mb-1">Nome do Posto / Prédio (Ex: MERCADÃO 44)</label>
-                <input
-                  type="text"
-                  value={predio}
-                  onChange={(e) => setPredio(e.target.value)}
-                  placeholder="Ex.: MERCADÃO 44"
-                  className="w-full rounded-xl bg-zinc-950 p-3 text-[14px] text-zinc-100 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500"
-                />
+                <label className="block text-[12px] font-semibold text-zinc-400 mb-1">Empresa / Posto</label>
+                {listaPostosDisponiveis.length > 0 && (
+                  <select
+                    value={empresaNova ? "__NOVA__" : predio}
+                    onChange={(e) => {
+                      if (e.target.value === "__NOVA__") {
+                        setEmpresaNova(true);
+                        setPredio("");
+                      } else {
+                        setEmpresaNova(false);
+                        setPredio(e.target.value);
+                      }
+                    }}
+                    className="mb-2 w-full rounded-xl bg-zinc-950 p-3 text-[14px] text-zinc-100 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500"
+                  >
+                    <option value="">Selecione a empresa já cadastrada</option>
+                    {listaPostosDisponiveis.map((empresa) => (
+                      <option key={empresa} value={empresa}>
+                        {empresa}
+                      </option>
+                    ))}
+                    <option value="__NOVA__">+ Nova empresa / posto</option>
+                  </select>
+                )}
+                {(empresaNova || listaPostosDisponiveis.length === 0) && (
+                  <input
+                    type="text"
+                    value={predio}
+                    onChange={(e) => {
+                      const valor = e.target.value;
+                      const existente = empresaExistente(valor, listaPostosDisponiveis);
+                      if (existente) {
+                        setEmpresaNova(false);
+                        setPredio(existente);
+                        return;
+                      }
+                      setPredio(valor);
+                    }}
+                    placeholder="Nome da nova empresa (só se ainda não existir)"
+                    className="w-full rounded-xl bg-zinc-950 p-3 text-[14px] text-zinc-100 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                )}
+                <p className="mt-1 text-[11px] text-zinc-500">
+                  Escolha uma empresa da lista para evitar duplicados. O campo livre só abre para um nome novo.
+                </p>
               </div>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
@@ -2981,14 +3105,18 @@ function AdminTab() {
                   />
                 </div>
                 <div>
-                  <label className="block text-[12px] font-semibold text-zinc-400 mb-1">Cargo / Função</label>
-                  <input
-                    type="text"
+                  <label className="block text-[12px] font-semibold text-zinc-400 mb-1">Cargo / Perfil</label>
+                  <select
                     value={cargoSeg}
                     onChange={(e) => setCargoSeg(e.target.value)}
-                    placeholder="Ex.: Segurança"
                     className="w-full rounded-xl bg-zinc-950 p-3 text-[14px] text-zinc-100 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500"
-                  />
+                  >
+                    {CARGOS_EQUIPA.map((cargo) => (
+                      <option key={cargo} value={cargo}>
+                        {cargo}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
@@ -3005,16 +3133,27 @@ function AdminTab() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[12px] font-semibold text-zinc-400 mb-1">PIN (Ex: 1234)</label>
+                  <label className="mb-1 flex items-center text-[12px] font-semibold text-zinc-400">
+                    PIN de acesso
+                    <button
+                      type="button"
+                      onClick={() => setPinSeg(gerarPinAcesso(segurancas.map((s) => s.pin)))}
+                      className="ml-auto text-[11px] font-semibold text-amber-400 underline underline-offset-2"
+                    >
+                      Gerar novo
+                    </button>
+                  </label>
                   <input
-                    type="password"
+                    type="text"
                     inputMode="numeric"
                     maxLength={6}
                     value={pinSeg}
-                    onChange={(e) => setPinSeg(e.target.value)}
-                    placeholder="PIN"
-                    className="w-full rounded-xl bg-zinc-950 p-3 font-mono text-[14px] text-zinc-100 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500"
+                    readOnly
+                    className="w-full rounded-xl bg-zinc-950 p-3 font-mono text-[16px] tracking-[0.3em] text-amber-300 ring-1 ring-amber-500/30 outline-none"
                   />
+                  <p className="mt-1 text-[11px] text-zinc-500">
+                    {editandoSegId ? "PIN atual do colaborador. Gere um novo se precisar resetar." : "Gerado automaticamente no cadastro."}
+                  </p>
                 </div>
               </div>
 

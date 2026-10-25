@@ -1,8 +1,10 @@
-// Marcações de início/fim de plantão sustentam a contagem de horas (Financeiro PJ)
-// e a abertura/fecho do checklist — nunca podem ser apagadas pelo vigilante.
+import { ehMarcacaoPonto } from "@/lib/folha-ponto";
+
+// Marcações de início/fim de plantão e de ponto sustentam a contagem de horas
+// — nunca podem ser apagadas pelo vigilante.
 export function ehMarcacaoPlantao(descricao: string | null | undefined): boolean {
   if (!descricao) return false;
-  return descricao.includes("NOVO PLANTÃO") || descricao.includes("PLANTÃO FINALIZADO");
+  return descricao.includes("NOVO PLANTÃO") || descricao.includes("PLANTÃO FINALIZADO") || ehMarcacaoPonto(descricao);
 }
 
 export function podeExcluirRegistro(

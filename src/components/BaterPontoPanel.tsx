@@ -1,15 +1,23 @@
 import { useEffect, useState } from "react";
 import { CapturaSelfie } from "@/components/CapturaSelfie";
-import { proximoTipoPonto, tipoPontoDaDescricao, type MarcacaoPonto, type TipoPonto } from "@/lib/folha-ponto";
+import { QrScanner } from "@/components/QrScanner";
+import { ehQrDePonto, proximoTipoPonto, tipoPontoDaDescricao, type MarcacaoPonto, type TipoPonto } from "@/lib/folha-ponto";
 import {
   EVENTO_FILA_PONTO,
   listarPendentes,
   precacheLocaisPonto,
   registarPontoCampo,
-  resolverLocalDoPosto,
+  resolverLocalPonto,
   type PontoPendente,
 } from "@/lib/ponto-offline";
-import { listarRegistros } from "@/lib/rondas";
+import { listarRegistros, normalizarNome, type LocalRonda } from "@/lib/rondas";
+
+function postoAceitaPortaria(local: LocalRonda, posto: string): boolean {
+  const alvo = normalizarNome(posto || "");
+  if (!alvo || alvo === "geral") return true;
+  const predio = normalizarNome(local.predio || "");
+  return predio.includes(alvo) || alvo.includes(predio);
+}
 
 export function BaterPontoPanel({
   seguranca,
@@ -21,6 +29,7 @@ export function BaterPontoPanel({
   onRegistado?: () => void;
 }) {
   const [selfie, setSelfie] = useState<File | null>(null);
+  const [localPonto, setLocalPonto] = useState<LocalRonda | null>(null);
   const [cicloSelfie, setCicloSelfie] = useState(0);
   const [tipo, setTipo] = useState<TipoPonto>("ENTRADA");
   const [pendentes, setPendentes] = useState<PontoPendente[]>([]);
@@ -59,7 +68,33 @@ export function BaterPontoPanel({
     return () => window.removeEventListener(EVENTO_FILA_PONTO, ouvir);
   }, [seguranca]);
 
+  async function lerQrPortaria(valor: string) {
+    setErro("");
+    setOk("");
+    try {
+      const local = await resolverLocalPonto(valor);
+      if (!local || !ehQrDePonto(local)) {
+        setLocalPonto(null);
+        setErro("Este QR é de um local de ronda. O ponto só aceita o QR da portaria.");
+        return;
+      }
+      if (!postoAceitaPortaria(local, postoAtribuido)) {
+        setLocalPonto(null);
+        setErro(`Este QR da portaria não pertence ao posto ${postoAtribuido}.`);
+        return;
+      }
+      setLocalPonto(local);
+    } catch {
+      setLocalPonto(null);
+      setErro("Não foi possível validar o QR da portaria.");
+    }
+  }
+
   async function bater() {
+    if (!localPonto) {
+      setErro("Leia o QR da portaria antes de registar o ponto.");
+      return;
+    }
     if (!selfie) {
       setErro("Capture a selfie antes de registar o ponto.");
       return;
@@ -68,18 +103,15 @@ export function BaterPontoPanel({
     setErro("");
     setOk("");
     try {
-      const local = await resolverLocalDoPosto(postoAtribuido);
-      if (!local) {
-        setErro(`Não há posto em cache para "${postoAtribuido}". Abra a aplicação online uma vez para guardar os locais.`);
-        return;
-      }
-      const resultado = await registarPontoCampo({ local, seguranca, tipo, selfie });
+      const predio = localPonto.predio;
+      const resultado = await registarPontoCampo({ local: localPonto, seguranca, tipo, selfie });
       setSelfie(null);
+      setLocalPonto(null);
       setCicloSelfie((n) => n + 1);
       if (resultado.modo === "offline") {
         setOk(`Ponto de ${tipo === "ENTRADA" ? "entrada" : "saída"} guardado offline às ${new Date(resultado.created_at).toLocaleTimeString("pt-BR")}. Será enviado automaticamente.`);
       } else {
-        setOk(`${tipo === "ENTRADA" ? "Entrada" : "Saída"} registada com selfie em ${local.predio}.`);
+        setOk(`${tipo === "ENTRADA" ? "Entrada" : "Saída"} registada com selfie em ${predio}.`);
       }
       await refrescarContexto();
       onRegistado?.();
@@ -96,7 +128,7 @@ export function BaterPontoPanel({
         <div>
           <p className="font-display text-[15px] font-bold text-zinc-100">Ponto — {seguranca}</p>
           <p className="text-[12px] text-zinc-400">
-            Selfie obrigatória no posto {postoAtribuido || "atribuído"}. A câmara fecha depois da captura.
+            Leia o QR da portaria e capture a selfie. A folha e o financeiro usam esta marcação.
           </p>
         </div>
         <span className={`rounded-md px-2 py-1 text-[11px] font-bold ring-1 ${tipo === "ENTRADA" ? "bg-emerald-500/15 text-emerald-400 ring-emerald-500/30" : "bg-amber-500/15 text-amber-400 ring-amber-500/30"}`}>
@@ -104,11 +136,23 @@ export function BaterPontoPanel({
         </span>
       </div>
 
+      <QrScanner
+        titulo="QR da portaria"
+        rotuloBotao="Ler QR da portaria"
+        onDetect={(valor) => void lerQrPortaria(valor)}
+        disabled={registando}
+      />
+      {localPonto && (
+        <p className="rounded-lg bg-emerald-500/10 px-3 py-2 text-[12px] font-semibold text-emerald-300 ring-1 ring-emerald-500/30">
+          Portaria confirmada: {localPonto.predio} — {localPonto.local}
+        </p>
+      )}
+
       <CapturaSelfie key={cicloSelfie} onCapturar={setSelfie} disabled={registando} />
 
       <button
         type="button"
-        disabled={registando || !selfie}
+        disabled={registando || !selfie || !localPonto}
         onClick={() => void bater()}
         className="w-full rounded-xl bg-amber-500 px-4 py-2.5 text-[13px] font-bold text-zinc-950 disabled:opacity-50"
       >

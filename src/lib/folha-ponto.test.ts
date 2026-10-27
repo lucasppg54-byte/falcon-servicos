@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   arredondarHoras,
   descricaoPontoComInstante,
+  ehQrDePonto,
   diasDoMes,
   fundirMarcacoes,
   horasPlantaoArredondadas,
@@ -126,6 +127,15 @@ describe("plantão PJ com tolerância de 30 minutos", () => {
     expect(diasDoMes("2026-10")).toHaveLength(31);
     expect(diasDoMes("2026-10")[0]).toBe("2026-10-01");
     expect(diasDoMes("2026-02")).toHaveLength(28);
+  });
+});
+
+describe("QR da portaria", () => {
+  it("aceita o QR de ponto e recusa o QR de um local de ronda", () => {
+    expect(ehQrDePonto({ local: "Portaria", qr_code_hash: "dream-park-04" })).toBe(true);
+    expect(ehQrDePonto({ local: "Recepção", qr_code_hash: "dream-park-ponto" })).toBe(true);
+    expect(ehQrDePonto({ local: "Hall", qr_code_hash: "samambaia-01" })).toBe(false);
+    expect(ehQrDePonto({ local: "Sala 2", qr_code_hash: "contraponto-01" })).toBe(false);
   });
 });
 

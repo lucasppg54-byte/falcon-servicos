@@ -25,6 +25,22 @@ export interface TurnoPonto {
   horasExtras: number;
 }
 
+function semAcento(valor: string): string {
+  return valor
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+/** QR da portaria/ponto. Um local de ronda não entra nesta marca. */
+export function ehQrDePonto(local: { local?: string | null; qr_code_hash?: string | null }): boolean {
+  const tokens = semAcento(`${local.local ?? ""} ${local.qr_code_hash ?? ""}`)
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+  return tokens.some((token) => token === "portaria" || token === "ponto");
+}
+
 export function ehMarcacaoPonto(descricao: string | null | undefined): boolean {
   if (!descricao) return false;
   return descricao.includes("PONTO ENTRADA") || descricao.includes("PONTO SAÍDA") || descricao.includes("PONTO SAIDA");

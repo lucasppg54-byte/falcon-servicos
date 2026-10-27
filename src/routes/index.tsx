@@ -18,7 +18,7 @@ import { gerarPinAcesso } from "@/lib/pin";
 import { empresaExistente } from "@/lib/empresas";
 import { fotosVisiveis } from "@/lib/fotos";
 import { ehIos, gravarPreferenciaGaleria, guardarNaGaleria, lerPreferenciaGaleria } from "@/lib/galeria";
-import { ehMarcacaoPonto, horasPlantaoArredondadas } from "@/lib/folha-ponto";
+import { ehMarcacaoPonto, ehQrDePonto, horasPlantaoArredondadas } from "@/lib/folha-ponto";
 import { ehMarcacaoPlantao, podeExcluirRegistro } from "@/lib/marcacoes";
 import { baixarQrPng, gerarProximoCodigo } from "@/lib/qr";
 import { QrScanner } from "@/components/QrScanner";
@@ -1039,6 +1039,13 @@ function RegistrarTab({ seguranca, postoAtribuido, isCobertura, admin }: { segur
       if (!encontrado) {
         setLocal(null);
         setErroBusca(`Nenhum local autorizado para o seu posto (${postoAtribuido}) com o código "${codigoLimpo}".`);
+        setBuscando(false);
+        return;
+      }
+
+      if (ehQrDePonto(encontrado)) {
+        setLocal(null);
+        setErroBusca("Este QR é da portaria e só serve para bater o ponto. Leia-o no bloco Ponto, junto com a selfie.");
         setBuscando(false);
         return;
       }

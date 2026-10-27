@@ -21,9 +21,13 @@ function suportaLanterna(track: MediaStreamTrack | undefined): boolean {
 export function QrScanner({
   onDetect,
   disabled,
+  titulo = "Leitor de QR",
+  rotuloBotao = "Ativar câmara",
 }: {
   onDetect: (codigo: string) => void;
   disabled: boolean;
+  titulo?: string;
+  rotuloBotao?: string;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -131,7 +135,7 @@ export function QrScanner({
     <div className="rounded-[20px] bg-zinc-950 p-3 ring-1 ring-zinc-800">
       <div className="flex items-center justify-between px-1 pb-2.5">
         <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
-          Leitor de QR
+          {titulo}
         </span>
         <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-600">
           {cameraAtiva ? "câmera ativa" : "câmera parada"}
@@ -176,7 +180,7 @@ export function QrScanner({
                   onClick={() => setCameraAtiva(true)}
                   className="mt-4 rounded-[12px] bg-gradient-to-r from-amber-500 to-amber-600 px-6 py-3 font-display text-[14px] font-bold text-zinc-950 shadow-md active:translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  Ativar câmara
+                  {rotuloBotao}
                 </button>
               )}
             </div>

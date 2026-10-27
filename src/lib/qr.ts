@@ -26,6 +26,12 @@ export function gerarProximoCodigo(predio: string, codigosExistentes: string[]):
   return `${base}-${String(maior + 1).padStart(2, "0")}`;
 }
 
+/** Código estável da portaria. O sufixo distingue este QR dos locais de ronda. */
+export function codigoQrPortaria(predio: string): string {
+  const base = slugPredio(predio);
+  return base ? `${base}-portaria` : "";
+}
+
 /* ---------------- QR vetorial (SVG) gerado de forma síncrona ---------------- */
 
 export interface QrVetorial {

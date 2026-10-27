@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-import { CapturaSelfie } from "@/components/CapturaSelfie";
-import { QrScanner } from "@/components/QrScanner";
+import { CameraCampo, type ModoCampo } from "@/components/CameraCampo";
 import { ehQrDePonto, proximoTipoPonto, tipoPontoDaDescricao, type MarcacaoPonto, type TipoPonto } from "@/lib/folha-ponto";
 import {
   EVENTO_FILA_PONTO,
@@ -23,14 +22,18 @@ export function BaterPontoPanel({
   seguranca,
   postoAtribuido,
   onRegistado,
+  onQrRonda,
+  rondaOcupada = false,
 }: {
   seguranca: string;
   postoAtribuido: string;
   onRegistado?: () => void;
+  onQrRonda: (codigo: string) => void;
+  rondaOcupada?: boolean;
 }) {
+  const [modo, setModo] = useState<ModoCampo>("ponto");
   const [selfie, setSelfie] = useState<File | null>(null);
   const [localPonto, setLocalPonto] = useState<LocalRonda | null>(null);
-  const [cicloSelfie, setCicloSelfie] = useState(0);
   const [tipo, setTipo] = useState<TipoPonto>("ENTRADA");
   const [pendentes, setPendentes] = useState<PontoPendente[]>([]);
   const [registando, setRegistando] = useState(false);
@@ -107,7 +110,6 @@ export function BaterPontoPanel({
       const resultado = await registarPontoCampo({ local: localPonto, seguranca, tipo, selfie });
       setSelfie(null);
       setLocalPonto(null);
-      setCicloSelfie((n) => n + 1);
       if (resultado.modo === "offline") {
         setOk(`Ponto de ${tipo === "ENTRADA" ? "entrada" : "saída"} guardado offline às ${new Date(resultado.created_at).toLocaleTimeString("pt-BR")}. Será enviado automaticamente.`);
       } else {
@@ -126,30 +128,33 @@ export function BaterPontoPanel({
     <div className="rounded-[18px] bg-zinc-900 p-4 ring-1 ring-zinc-800 shadow-xl space-y-3 sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <p className="font-display text-[15px] font-bold text-zinc-100">Ponto — {seguranca}</p>
+          <p className="font-display text-[15px] font-bold text-zinc-100">Campo — {seguranca}</p>
           <p className="text-[12px] text-zinc-400">
-            Leia o QR da portaria e capture a selfie. A folha e o financeiro usam esta marcação.
+            Uma câmara só. No ponto, o QR da portaria e a selfie são obrigatórios.
           </p>
         </div>
-        <span className={`rounded-md px-2 py-1 text-[11px] font-bold ring-1 ${tipo === "ENTRADA" ? "bg-emerald-500/15 text-emerald-400 ring-emerald-500/30" : "bg-amber-500/15 text-amber-400 ring-amber-500/30"}`}>
-          Próxima: {tipo === "ENTRADA" ? "ENTRADA" : "SAÍDA"}
-        </span>
       </div>
 
-      <QrScanner
-        titulo="QR da portaria"
-        rotuloBotao="Ler QR da portaria"
-        onDetect={(valor) => void lerQrPortaria(valor)}
-        disabled={registando}
+      <CameraCampo
+        modo={modo}
+        onModo={setModo}
+        tipoPonto={tipo}
+        disabled={registando || (modo === "ronda" && rondaOcupada)}
+        onQr={(valor) => {
+          if (modo === "ponto") void lerQrPortaria(valor);
+          else onQrRonda(valor);
+        }}
+        portariaOk={!!localPonto}
+        selfiePronta={!!selfie}
+        onSelfie={setSelfie}
       />
-      {localPonto && (
+      {modo === "ponto" && localPonto && (
         <p className="rounded-lg bg-emerald-500/10 px-3 py-2 text-[12px] font-semibold text-emerald-300 ring-1 ring-emerald-500/30">
           Portaria confirmada: {localPonto.predio} — {localPonto.local}
         </p>
       )}
 
-      <CapturaSelfie key={cicloSelfie} onCapturar={setSelfie} disabled={registando} />
-
+      {modo === "ponto" && (
       <button
         type="button"
         disabled={registando || !selfie || !localPonto}
@@ -158,6 +163,7 @@ export function BaterPontoPanel({
       >
         {registando ? "A gravar..." : "Registar ponto"}
       </button>
+      )}
       {erro && <p className="text-[13px] font-medium text-red-400">{erro}</p>}
       {ok && <p className="text-[13px] font-medium text-emerald-400">{ok}</p>}
 

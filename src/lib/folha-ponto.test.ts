@@ -11,6 +11,7 @@ import {
   tipoPontoDaDescricao,
   type MarcacaoPonto,
 } from "@/lib/folha-ponto";
+import { codigoQrPortaria } from "@/lib/qr";
 import { ehAdminSeguranca, rotuloGestor } from "@/lib/perfis";
 import { empresaExistente } from "@/lib/empresas";
 
@@ -136,6 +137,10 @@ describe("QR da portaria", () => {
     expect(ehQrDePonto({ local: "Recepção", qr_code_hash: "dream-park-ponto" })).toBe(true);
     expect(ehQrDePonto({ local: "Hall", qr_code_hash: "samambaia-01" })).toBe(false);
     expect(ehQrDePonto({ local: "Sala 2", qr_code_hash: "contraponto-01" })).toBe(false);
+    const codigo = codigoQrPortaria("Dream Park");
+    expect(codigo).toBe("dream-park-portaria");
+    expect(ehQrDePonto({ local: "Portaria", qr_code_hash: codigo })).toBe(true);
+    expect(ehQrDePonto({ local: "Hall", qr_code_hash: "dream-park-02" })).toBe(false);
   });
 });
 

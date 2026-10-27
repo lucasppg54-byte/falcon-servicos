@@ -1,12 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Camera, Download, Images, Search, Trash2 } from "lucide-react";
+import { Camera, Download, Images, Printer, Search, Trash2 } from "lucide-react";
 import {
   buscarLocalPorQr,
   ehAdminSeguranca,
   excluirRegistro,
   listarRegistros,
   normalizarCodigoQr,
+  normalizarNome,
   registrarRonda,
   marcarComoCorrigido,
   rotuloGestor,
@@ -20,8 +21,7 @@ import { fotosVisiveis } from "@/lib/fotos";
 import { ehIos, gravarPreferenciaGaleria, guardarNaGaleria, lerPreferenciaGaleria } from "@/lib/galeria";
 import { ehMarcacaoPonto, ehQrDePonto, horasPlantaoArredondadas } from "@/lib/folha-ponto";
 import { ehMarcacaoPlantao, podeExcluirRegistro } from "@/lib/marcacoes";
-import { baixarQrPng, gerarProximoCodigo } from "@/lib/qr";
-import { QrScanner } from "@/components/QrScanner";
+import { baixarQrPng, codigoQrPortaria, gerarProximoCodigo, imprimirQrEmLote } from "@/lib/qr";
 import { LocaisQrSection, QrPreview } from "@/components/LocaisQrSection";
 import { FolhaPontoTab } from "@/components/FolhaPontoTab";
 import { EscalasTab } from "@/components/EscalasTab";
@@ -1169,10 +1169,14 @@ function RegistrarTab({ seguranca, postoAtribuido, isCobertura, admin }: { segur
 
   return (
     <>
-      {!admin && <BaterPontoPanel seguranca={seguranca} postoAtribuido={postoAtribuido} />}
-
-      <p className="mt-2 px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">Ronda do posto</p>
-      {!admin && <QrScanner onDetect={(val) => consultar(val, false)} disabled={buscando} />}
+      {!admin && (
+        <BaterPontoPanel
+          seguranca={seguranca}
+          postoAtribuido={postoAtribuido}
+          rondaOcupada={buscando}
+          onQrRonda={(val) => consultar(val, false)}
+        />
+      )}
 
       <div className="mt-4">
         <label className="px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
@@ -2774,6 +2778,9 @@ function AdminTab() {
   // Enquanto o código não for editado à mão, é gerado a partir do nome do prédio (ex.: samambaia-02).
   const [qrManual, setQrManual] = useState(false);
   const [salvandoLocal, setSalvandoLocal] = useState(false);
+  const [postoPortaria, setPostoPortaria] = useState("");
+  const [verPortaria, setVerPortaria] = useState(false);
+  const [salvandoPortaria, setSalvandoPortaria] = useState(false);
   const formLocalRef = useRef<HTMLDivElement>(null);
 
   // Estados de Cadastro / Edição de Segurança
@@ -2785,7 +2792,15 @@ function AdminTab() {
   const [postosSelecionados, setTodosPostosSelecionados] = useState<string[]>([]);
   const [salvandoSeg, setSalvandoSeg] = useState(false);
 
-  const listaPostosDisponiveis = Array.from(new Set(locais.map((l) => l.predio).filter(Boolean))).sort();
+  const postosDaEquipa = segurancas.flatMap((s) =>
+    (s.posto_atribuido || "")
+      .split(",")
+      .map((p) => p.trim())
+      .filter((p) => p && p.toLowerCase() !== "geral"),
+  );
+  const listaPostosDisponiveis = Array.from(
+    new Set([...locais.map((l) => l.predio), ...postosDaEquipa].filter(Boolean)),
+  ).sort();
   const qrAutomatico = useMemo(
     () => gerarProximoCodigo(predio, locais.map((l) => l.qr_code_hash)),
     [predio, locais],
@@ -2814,6 +2829,52 @@ function AdminTab() {
     carregarDadosAdmin();
   }, []);
 
+  const portarias = locais.filter((l) => ehQrDePonto(l));
+  const portariaAtual = portarias.find((l) => normalizarNome(l.predio) === normalizarNome(postoPortaria)) ?? null;
+
+  async function guardarPortaria() {
+    const nome = postoPortaria.trim();
+    const predioCanonico = empresaExistente(nome, listaPostosDisponiveis) || nome;
+    const codigo = codigoQrPortaria(predioCanonico);
+    if (!predioCanonico || !codigo) {
+      window.alert("Selecione a empresa / posto da portaria.");
+      return;
+    }
+    const existente = portarias.find((l) => normalizarNome(l.predio) === normalizarNome(predioCanonico));
+    if (existente) {
+      window.alert("Este posto já tem QR de portaria. Use visualizar, PNG ou imprimir.");
+      return;
+    }
+    setSalvandoPortaria(true);
+    try {
+      const { error } = await supabase.from("locais_ronda").insert([
+        { predio: predioCanonico, local: "Portaria", qr_code_hash: codigo },
+      ]);
+      if (error) throw error;
+      await carregarDadosAdmin(true);
+    } catch (err: any) {
+      window.alert(err?.message || "Não foi possível gravar o QR da portaria.");
+    } finally {
+      setSalvandoPortaria(false);
+    }
+  }
+
+  async function excluirPortaria(id: string) {
+    if (!window.confirm("Excluir o QR da portaria deste posto?")) return;
+    const snapshot = locais;
+    setLocais((prev) => prev.filter((l) => l.id !== id));
+    setExcluindoId(id);
+    try {
+      await apagarLinha("locais_ronda", id);
+      await carregarDadosAdmin(true);
+    } catch (err: any) {
+      setLocais(snapshot);
+      window.alert(err?.message || "Não foi possível excluir o QR da portaria.");
+    } finally {
+      setExcluindoId(null);
+    }
+  }
+
   function prepararEdicaoLocal(loc: LocalRonda) {
     setEditandoLocalId(loc.id);
     setPredio(loc.predio);
@@ -2839,6 +2900,10 @@ function AdminTab() {
     const predioCanonico = empresaExistente(nomeDigitado, listaPostosDisponiveis) || nomeDigitado;
     if (!predioCanonico || !localNome.trim() || !qrEfetivo) {
       window.alert("Preencha todos os campos do local de ronda.");
+      return;
+    }
+    if (ehQrDePonto({ local: localNome, qr_code_hash: qrEfetivo })) {
+      window.alert("A portaria tem cadastro próprio. Use a secção QR da Portaria / Ponto.");
       return;
     }
     setSalvandoLocal(true);
@@ -2996,6 +3061,112 @@ function AdminTab() {
         <p className="text-center text-[13px] text-zinc-500 py-4">A carregar dados administrativos...</p>
       ) : (
         <>
+          <div className="rounded-[18px] bg-zinc-900 p-4 ring-1 ring-amber-500/40 shadow-xl space-y-4 sm:p-6">
+            <div>
+              <h4 className="font-display text-[16px] font-bold text-zinc-100">🚪 Cadastro de QR Code da Portaria / Ponto</h4>
+              <p className="mt-1 text-[13px] text-zinc-400">
+                Um QR por empresa, só para bater o ponto. Não entra na lista de locais de ronda.
+              </p>
+            </div>
+            <label className="block text-[12px] font-semibold text-zinc-400">
+              Empresa / posto
+              <select
+                value={postoPortaria}
+                onChange={(e) => {
+                  setPostoPortaria(e.target.value);
+                  setVerPortaria(false);
+                }}
+                className="mt-1 w-full rounded-xl bg-zinc-950 p-3 text-[14px] font-medium text-zinc-100 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500"
+              >
+                <option value="">Selecione a empresa</option>
+                {listaPostosDisponiveis.map((empresa) => (
+                  <option key={empresa} value={empresa}>{empresa}</option>
+                ))}
+              </select>
+            </label>
+            {listaPostosDisponiveis.length === 0 && (
+              <input
+                type="text"
+                value={postoPortaria}
+                onChange={(e) => setPostoPortaria(e.target.value)}
+                placeholder="Nome da empresa / posto"
+                className="w-full rounded-xl bg-zinc-950 p-3 text-[14px] text-zinc-100 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500"
+              />
+            )}
+            {!portariaAtual && (
+              <button
+                type="button"
+                onClick={() => void guardarPortaria()}
+                disabled={salvandoPortaria || !postoPortaria.trim()}
+                className="w-full rounded-xl bg-amber-500 py-3 font-display text-[15px] font-bold text-zinc-950 disabled:opacity-50"
+              >
+                {salvandoPortaria ? "A gravar..." : "Registar QR da portaria"}
+              </button>
+            )}
+            {portariaAtual && (
+              <div className="flex flex-col gap-4 rounded-xl bg-zinc-950 p-3 ring-1 ring-zinc-800 sm:flex-row sm:items-center">
+                <QrPreview codigo={portariaAtual.qr_code_hash} className="size-36 shrink-0 rounded-lg bg-white" />
+                <div className="min-w-0 space-y-2">
+                  <p className="font-semibold text-zinc-100">{portariaAtual.predio} — Portaria</p>
+                  <p className="truncate font-mono text-[13px] text-zinc-400">{portariaAtual.qr_code_hash}</p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setVerPortaria((atual) => !atual)}
+                      className="rounded-lg bg-zinc-800 px-3 py-1.5 text-[12px] font-semibold text-zinc-100 ring-1 ring-zinc-700"
+                    >
+                      Visualizar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => baixarQrPng({ codigo: portariaAtual.qr_code_hash, predio: portariaAtual.predio, local: "Portaria" })}
+                      className="flex items-center gap-1.5 rounded-lg bg-zinc-800 px-3 py-1.5 text-[12px] font-semibold text-zinc-100 ring-1 ring-zinc-700"
+                    >
+                      <Download className="size-3.5" /> PNG
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => imprimirQrEmLote([{ codigo: portariaAtual.qr_code_hash, predio: portariaAtual.predio, local: "Portaria / Ponto" }])}
+                      className="flex items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-1.5 text-[12px] font-bold text-zinc-950"
+                    >
+                      <Printer className="size-3.5" /> Imprimir
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void excluirPortaria(portariaAtual.id)}
+                      disabled={excluindoId === portariaAtual.id}
+                      className="rounded-lg bg-red-950 px-3 py-1.5 text-[12px] font-semibold text-red-400 ring-1 ring-red-500/30 disabled:opacity-50"
+                    >
+                      Excluir
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+            {portariaAtual && verPortaria && (
+              <div className="rounded-xl bg-white p-4">
+                <QrPreview codigo={portariaAtual.qr_code_hash} className="mx-auto size-64" />
+                <p className="mt-2 text-center text-[13px] font-semibold text-zinc-900">{portariaAtual.predio} — Portaria</p>
+              </div>
+            )}
+            {portarias.length > 0 && (
+              <div className="space-y-2 border-t border-zinc-800 pt-3">
+                <p className="text-[12px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Portarias registadas</p>
+                {portarias.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => setPostoPortaria(p.predio)}
+                    className="flex w-full items-center justify-between rounded-lg bg-zinc-950 px-3 py-2 text-left text-[13px] text-zinc-200 ring-1 ring-zinc-800"
+                  >
+                    <span>{p.predio}</span>
+                    <code className="font-mono text-[11px] text-zinc-500">{p.qr_code_hash}</code>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* SECÇÃO DE LOCAIS / POSTOS */}
           <div ref={formLocalRef} className="scroll-mt-4 rounded-[18px] bg-zinc-900 p-4 ring-1 ring-zinc-800 shadow-xl space-y-4 sm:p-6">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -3067,7 +3238,7 @@ function AdminTab() {
                     type="text"
                     value={localNome}
                     onChange={(e) => setLocalNome(e.target.value)}
-                    placeholder="Ex.: Portaria"
+                    placeholder="Ex.: Hall, corredor, sala"
                     className="w-full rounded-xl bg-zinc-950 p-3 text-[14px] text-zinc-100 ring-1 ring-zinc-700 outline-none focus:ring-2 focus:ring-amber-500"
                   />
                 </div>
@@ -3133,7 +3304,7 @@ function AdminTab() {
               </button>
             </form>
 
-            <LocaisQrSection locais={locais} onEditar={prepararEdicaoLocal} onExcluir={excluirLocal} />
+            <LocaisQrSection locais={locais.filter((l) => !ehQrDePonto(l))} onEditar={prepararEdicaoLocal} onExcluir={excluirLocal} />
           </div>
 
           {/* SECÇÃO DE SEGURANÇAS */}
